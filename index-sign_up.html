@@ -1,1 +1,84 @@
-<!DOCTYPE html><html data-bs-theme="light" lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no"><title>Fisioterapp</title><link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css"><link rel="stylesheet" href="assets/css/styles.min.css"></head><body><section class="text-center screen" id="role-select"><div class="container" style="font-size: 19px;"><h4 class="mt-3 mb-0">FisioterAPP</h4><p class="mt-4 pt-0 mb-0" style="text-align: center;">Tu pinchi nombre de usuario:</p><input type="text"><button class="btn btn-primary" type="button">Button</button></div><div class="container" style="font-size: 19px;"><p class="mt-4 pt-0 mb-0 pb-0">Tu pinchi contraseña</p><input type="text"><button class="btn btn-primary" type="button">Button</button></div><div class="container" style="font-size: 19px;"><p class="mt-4 pt-0 mb-0 pb-0">Confirma tu pinchi contraseña</p><input type="text"><button class="btn btn-primary" type="button">Button</button></div></section><script src="assets/bootstrap/js/bootstrap.min.js"></script><script src="assets/js/script.min.js"></script></body></html>
+<!DOCTYPE html>
+<html data-bs-theme="light" lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>Fisioterapp</title>
+
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/css/styles.min.css">
+</head>
+
+<body>
+
+<section class="text-center screen" id="role-select">
+
+    <h4 class="mt-3 mb-0">FisioterAPP</h4>
+
+    <div class="container" style="font-size: 19px; max-width:400px;">
+
+        <!-- FORM -->
+        <form onsubmit="event.preventDefault(); registrarUsuario();">
+
+            <p class="mt-4 mb-0 text-center">
+                Tu nombre de usuario:
+            </p>
+            <input id="usuario" type="text" class="form-control mb-3" required>
+
+            <p class="mt-3 mb-0">
+                Tu contraseña
+            </p>
+            <input id="password" type="password" class="form-control mb-3" required>
+
+            <p class="mt-3 mb-0">
+                Confirma tu contraseña
+            </p>
+            <input id="confirmar" type="password" class="form-control mb-4" required>
+
+            <button class="btn btn-primary w-100" type="submit">
+                Crear cuenta
+            </button>
+
+        </form>
+
+    </div>
+
+</section>
+
+<script src="assets/bootstrap/js/bootstrap.min.js"></script>
+
+<script>
+async function registrarUsuario() {
+
+    const usuario = document.getElementById("usuario").value;
+    const password = document.getElementById("password").value;
+    const confirmar = document.getElementById("confirmar").value;
+
+    // Validación básica
+    if (password !== confirmar) {
+        alert("Las contraseñas no coinciden");
+        return;
+    }
+
+    const res = await fetch("http://localhost:5000/register", {
+        method: "POST",
+        headers: {
+            "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ usuario, password })
+    });
+
+    const data = await res.json();
+
+    if (data.success) {
+        alert("Cuenta creada correctamente");
+        window.location.href = "login.html";
+    } else {
+        alert("Error al registrar usuario");
+    }
+}
+</script>
+
+</body>
+</html>
