@@ -5,6 +5,10 @@ from flask_cors import CORS
 
 app = Flask(__name__)
 
+#direcciones de servidor IMPORTANTES
+BASE_DIR = os.path.dirname(os.path.abspath(__file__)) #consigue el directorio del app.py
+FRONTEND_DIR = os.path.join(BASE_DIR, "..") #extrae la carpeta padre de base_dir
+
 #para login
 app.secret_key = "clave_secreta"
 
@@ -32,12 +36,12 @@ def conectar():
 
 @app.route("/")
 def frontend():
-    return send_from_directory("C:/Users/julic/OneDrive/Desktop/Proyecto innovatec/innovatec-fisioapp", "index-sign_in.html")
+    return send_from_directory(FRONTEND_DIR, "index.html")
 
 @app.route('/<path:path>')
 def serve_files(path):
     return send_from_directory(
-        "C:/Users/julic/OneDrive/Desktop/Proyecto innovatec/innovatec-fisioapp",
+        FRONTEND_DIR,
         path
     )
 
