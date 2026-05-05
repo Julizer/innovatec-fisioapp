@@ -46,11 +46,29 @@
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
     <script>
+        const sexos = {
+            'M': 'Masculino',
+            'F': 'Femenino'
+        };
+    </script>
+    <script>
     async function cargarPacientes() {
         const contenedor = document.getElementById("lista-pacientes");
 
         try {
-            const res = await fetch("http://127.0.0.1:5000/pacientes");
+            const res = await fetch("/pacientes", {
+                credentials: "include"
+            });
+
+            if (res.status === 401) {
+                window.location.href = "index-sign_in.html";
+                return;
+            }
+
+            if (res.status === 403) {
+                alert("No tienes permisos");
+                return;
+            }
             const pacientes = await res.json();
 
             contenedor.innerHTML = "";
@@ -61,8 +79,9 @@
                         <div class="card-body">
                             <h4 class="card-title">${p.nombre} ${p.apellidos}</h4>
                             <h6 class="text-muted">${p.correo || "Sin correo"}</h6>
-                            <p>Tel: ${p.telefono || "N/A"}</p>
-                            <p>Sexo: ${p.sexo || "N/A"}</p>
+                            <p class="mb-0">Tel: ${p.telefono || "N/A"}</p>
+                            <p class="mb-0">Fecha de nacimiento: ${p.fecha_nacimiento || "N/A"}</p>
+                            <p class="mb-0">Sexo: ${sexos[p.sexo] || "N/A"}</p>
                         </div>
                     </div>
                 `;
@@ -75,7 +94,41 @@
     }
 
     // Ejecutar automáticamente
-    cargarPacientes();
+async function verificarSesion() {
+    try {
+        const res = await fetch("/me", {
+            credentials: "include"
+        });
+
+        if (!res.ok) {
+            window.location.href = "index-sign_in.html";
+            return false;
+        }
+
+        const data = await res.json();
+
+        console.log("ROL:", data.rol);
+
+        if (!["terapeuta", "admin"].includes(data.rol)) {
+            alert("No tienes permisos");
+            return false;
+        }
+
+        return true;
+
+    } catch (error) {
+        console.error("Error verificando sesión:", error);
+        return false;
+    }
+}
+
+// 🔥 EJECUCIÓN CONTROLADA
+(async () => {
+    const ok = await verificarSesion();
+    if (ok) {
+        cargarPacientes(); // 👈 SOLO aquí se ejecuta
+    }
+})();
     </script>
 </body>
 
