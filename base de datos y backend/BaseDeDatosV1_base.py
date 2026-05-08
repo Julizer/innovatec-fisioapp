@@ -26,6 +26,8 @@ CREATE TABLE pacientes (
     sexo TEXT,
     telefono TEXT,
     correo TEXT,
+    terapeuta_id INTEGER,
+    FOREIGN KEY (terapeuta_id) REFERENCES usuarios(id),
     fecha_registro DATE DEFAULT CURRENT_DATE
 );
 

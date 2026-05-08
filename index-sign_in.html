@@ -22,10 +22,10 @@
         <form onsubmit="event.preventDefault(); iniciarSesion();">
 
             <p class="mt-4 pt-0 mb-0 text-center">
-                Tu nombre de usuario:
+                Correo electrónico:
             </p>
 
-            <input id="usuario" type="text" class="form-control mb-3" required>
+            <input id="correo" type="email" class="form-control mb-3" required>
 
             <p class="mt-4 pt-0 mb-0 pb-0">
                 Tu contraseña
@@ -48,7 +48,7 @@
 <script>
 async function iniciarSesion() {
 
-    const correo = document.getElementById("usuario").value;
+    const correo = document.getElementById("correo").value;
     const password = document.getElementById("password").value;
 
     try {
@@ -65,7 +65,13 @@ async function iniciarSesion() {
 
         if (res.ok) {
             alert("Login correcto");
-            window.location.href = "dashboard-terapeuta-home.html";
+            const rol = data.usuario?.rol;
+
+            if (rol === "paciente") {
+                window.location.href = "dashboard-paciente-home.html";
+            } else {
+                window.location.href = "dashboard-terapeuta-home.html";
+            }
         } else {
             alert(data.mensaje);
         }
