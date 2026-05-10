@@ -1,8 +1,18 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="en" style="margin: auto;padding-bottom: 80px;height: 120px;bottom: 0;width: 100%;/*max-width: 430px;*//*background: #fff;*/border-top: 1px solid #ddd;color: #555;text-decoration: none;">
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <title>Pruebas</title>
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
@@ -44,6 +54,7 @@
     </nav>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
 </body>
 
 </html>

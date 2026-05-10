@@ -4,9 +4,10 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
-    <title>Fisioterapp</title>
+    <title>Fisioterapp - Registro</title>
 
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/css/Fading%20animation.css">
     <link rel="stylesheet" href="assets/css/styles.min.css">
 </head>
 
@@ -18,64 +19,24 @@
 
     <div class="container" style="font-size: 19px; max-width:400px;">
 
-        <!-- FORM -->
-        <form onsubmit="event.preventDefault(); registrarUsuario();">
+        <p class="mt-4 mb-4 text-center">
+            ¡Bienvenido! ¿Vienes a sanar o a ayudar a sanar?
+        </p>
 
-            <p class="mt-4 mb-2 text-center">
-                Selecciona tu rol
-            </p>
-            <div class="d-grid gap-2 mb-3">
-                <button id="btn-terapeuta" class="btn btn-primary" type="button" onclick="seleccionarRol('terapeuta')">
-                    Terapeuta
-                </button>
-                <button id="btn-paciente" class="btn btn-outline-primary" type="button" onclick="seleccionarRol('paciente')">
-                    Paciente
-                </button>
-            </div>
+        <div class="d-grid gap-3 mb-4">
+            <a href="index-sign_up_terapeuta.html" class="btn btn-primary btn-lg">
+                <i class="material-icons" style="vertical-align: middle; margin-right: 8px;"></i>
+                Soy Terapeuta
+            </a>
+            <a href="index-sign_up_paciente.html" class="btn btn-outline-primary btn-lg">
+                <i class="material-icons" style="vertical-align: middle; margin-right: 8px;"></i>
+                Soy Paciente
+            </a>
+        </div>
 
-            <input id="rol" type="hidden" value="terapeuta">
-
-            <div id="paciente-choose" class="mb-3" style="display: none;">
-                <label for="codigo_terapeuta" class="form-label">Código de tu terapeuta</label>
-                <div class="input-group">
-                    <input id="codigo_terapeuta" type="text" class="form-control" placeholder="Ej: ABC12345">
-                    <button id="verificar-codigo" class="btn btn-outline-secondary" type="button" onclick="verificarCodigo()">Verificar</button>
-                </div>
-                <div id="terapeuta-info" class="form-text mt-2"></div>
-            </div>
-
-            <p class="mt-4 mb-0 text-center">
-                Correo electrónico:
-            </p>
-            <input id="correo" type="email" class="form-control mb-3" required>
-            <div id="name-fields" style="display:block;">
-                <p class="mt-3 mb-0">Nombre</p>
-                <input id="nombre" type="text" class="form-control mb-2">
-                <p class="mt-1 mb-0">Apellidos</p>
-                <input id="apellidos" type="text" class="form-control mb-2">
-                <p class="mt-1 mb-0">Teléfono (opcional)</p>
-                <input id="telefono" type="text" class="form-control mb-2">
-                <div id="especialidad-field">
-                    <p class="mt-1 mb-0">Especialidad (opcional)</p>
-                    <input id="especialidad" type="text" class="form-control mb-2">
-                </div>
-            </div>
-
-            <p class="mt-3 mb-0">
-                Tu contraseña
-            </p>
-            <input id="password" type="password" class="form-control mb-3" required>
-
-            <p class="mt-3 mb-0">
-                Confirma tu contraseña
-            </p>
-            <input id="confirmar" type="password" class="form-control mb-4" required>
-
-            <button class="btn btn-primary w-100" type="submit">
-                Crear cuenta
-            </button>
-
-        </form>
+        <div class="text-center">
+            <a href="index-sign_in.html" class="text-decoration-none">¿Ya tienes cuenta? Inicia sesión</a>
+        </div>
 
     </div>
 
@@ -84,102 +45,32 @@
 <script src="assets/bootstrap/js/bootstrap.min.js"></script>
 
 <script>
-function seleccionarRol(rol) {
-    const rolInput = document.getElementById("rol");
-    const btnTerapeuta = document.getElementById("btn-terapeuta");
-    const btnPaciente = document.getElementById("btn-paciente");
-
-    rolInput.value = rol;
-
-    btnTerapeuta.classList.remove("btn-primary", "btn-outline-primary");
-    btnPaciente.classList.remove("btn-primary", "btn-outline-primary");
-
-    if (rol === "terapeuta") {
-        btnTerapeuta.classList.add("btn-primary");
-        btnPaciente.classList.add("btn-outline-primary");
-        document.getElementById('paciente-choose').style.display = 'none';
-        document.getElementById('name-fields').style.display = 'block';
-        document.getElementById('especialidad-field').style.display = 'block';
-    } else {
-        btnPaciente.classList.add("btn-primary");
-        btnTerapeuta.classList.add("btn-outline-primary");
-        document.getElementById('paciente-choose').style.display = 'block';
-        document.getElementById('name-fields').style.display = 'block';
-        // pacientes don't set especialidad
-        document.getElementById('especialidad-field').style.display = 'none';
-    }
-}
-
-async function registrarUsuario() {
-
-    const correo = document.getElementById("correo").value;
-    const password = document.getElementById("password").value;
-    const confirmar = document.getElementById("confirmar").value;
-    const rol = document.getElementById("rol").value;
-    const codigo_terapeuta = document.getElementById("codigo_terapeuta")?.value || null;
-    const nombre = document.getElementById('nombre')?.value || null;
-    const apellidos = document.getElementById('apellidos')?.value || null;
-    const telefono = document.getElementById('telefono')?.value || null;
-    const especialidad = document.getElementById('especialidad')?.value || null;
-
-    // Validación básica
-    if (password !== confirmar) {
-        alert("Las contraseñas no coinciden");
-        return;
-    }
-
-    const res = await fetch("/register", {
-        method: "POST",
-        headers: {
-            "Content-Type": "application/json"
-        },
-        credentials: "include",
-        body: JSON.stringify({ correo, password, rol, codigo_terapeuta, nombre, apellidos, telefono, especialidad })
-    });
-
-    const data = await res.json();
-
-    if (data.success) {
-        alert("Cuenta creada correctamente");
-        if (data.codigo) {
-            alert('Tu código de terapeuta es: ' + data.codigo);
-        }
-        window.location.href = "index-sign_in.html";
-    } else {
-        alert(data.mensaje || "Error al registrar usuario");
-    }
-}
-
-async function verificarCodigo() {
-    const codigo = document.getElementById('codigo_terapeuta').value.trim();
-    const info = document.getElementById('terapeuta-info');
-    info.textContent = '';
-    if (!codigo) {
-        info.textContent = 'Introduce un código';
-        return;
-    }
-
+// Redirección automática si hay sesión activa
+async function checkActiveSession() {
     try {
-        const res = await fetch(`/terapeuta/lookup?codigo=${encodeURIComponent(codigo)}`);
+        const res = await fetch("/me", {
+            method: "GET",
+            credentials: "include"
+        });
+        
         if (res.ok) {
-            const data = await res.json();
-            const nombre = data.nombre || '';
-            const apellidos = data.apellidos || '';
-            info.textContent = `Terapeuta encontrado: ${nombre} ${apellidos}`.trim();
-            info.classList.remove('text-danger');
-            info.classList.add('text-success');
-        } else {
-            info.textContent = 'Código no válido';
-            info.classList.remove('text-success');
-            info.classList.add('text-danger');
+            const userData = await res.json();
+            const rol = userData.rol;
+            
+            // Si hay sesión activa, redirigir al dashboard correspondiente
+            if (rol === "paciente") {
+                window.location.href = "dashboard-paciente-home.html";
+            } else if (rol === "terapeuta") {
+                window.location.href = "dashboard-terapeuta-home.html";
+            } else if (rol === "admin") {
+                window.location.href = "dashboard-admin.html";
+            }
         }
-    } catch (err) {
-        console.error(err);
-        info.textContent = 'Error verificando código';
-        info.classList.add('text-danger');
+    } catch (error) {
+        console.log("No hay sesión activa");
     }
 }
-</script>
 
-</body>
-</html>
+// Verificar sesión al cargar la página
+document.addEventListener("DOMContentLoaded", checkActiveSession);
+</script>

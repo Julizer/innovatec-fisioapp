@@ -5,6 +5,13 @@ import random
 import string
 import bcrypt
 from flask_cors import CORS
+from pywebpush import webpush, WebPushException
+import datetime
+import json
+import threading
+import time
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from cryptography.hazmat.primitives.asymmetric import ec
 
 app = Flask(__name__)
 
@@ -22,8 +29,18 @@ IS_PRODUCTION = os.getenv("FLASK_ENV") == "production"
 app.config["SESSION_COOKIE_SAMESITE"] = "None" if IS_PRODUCTION else "Lax"
 app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION
 
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "eFaUctaZhCHWiKuZXZ5hgh8G482uvKQLY_PCyCFdubgSuj1pQGDwQgx4jJxEgve_8O8eklSKij5xoQytYZjHHg")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "3vfnp_SJW87mtAqeTK7YMT1S5VPGuArrDk7UONC9xbQ")
+VAPID_CLAIMS = {"sub": "mailto:admin@innovatec.com"}
+AUTO_NOTIFICATION_HOURS = [9, 14, 19]
+
 
 def initialize_database():
+    # Evitar inicialización múltiple
+    if hasattr(initialize_database, '_initialized'):
+        return
+    initialize_database._initialized = True
+
     conn = sqlite3.connect(DB_PATH)
     conn.execute("PRAGMA foreign_keys = ON")
     cursor = conn.cursor()
@@ -49,14 +66,68 @@ def initialize_database():
             fecha_registro DATE DEFAULT CURRENT_DATE,
             FOREIGN KEY (terapeuta_id) REFERENCES usuarios(id)
         );
+
+        CREATE TABLE IF NOT EXISTS encuestas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paciente_id INTEGER NOT NULL,
+            fecha DATE DEFAULT CURRENT_DATE,
+            completada BOOLEAN DEFAULT FALSE,
+            FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS respuestas_encuesta (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            encuesta_id INTEGER NOT NULL,
+            pregunta_numero INTEGER NOT NULL,
+            respuesta TEXT NOT NULL,
+            FOREIGN KEY (encuesta_id) REFERENCES encuestas(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS notificaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paciente_id INTEGER NOT NULL,
+            terapeuta_id INTEGER NOT NULL,
+            mensaje TEXT NOT NULL,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            enviada BOOLEAN DEFAULT FALSE,
+            tipo TEXT DEFAULT 'manual',
+            FOREIGN KEY (paciente_id) REFERENCES pacientes(id),
+            FOREIGN KEY (terapeuta_id) REFERENCES usuarios(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS push_subscriptions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paciente_id INTEGER NOT NULL,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
+        );
         """
     )
+
+    # Reparar esquema de respuestas_encuesta si aún referencia encuestas_old
+    cursor.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='respuestas_encuesta'")
+    respuestas_row = cursor.fetchone()
+    respuestas_sql = respuestas_row[0] if respuestas_row else None
+    if respuestas_sql and 'encuestas_old' in respuestas_sql:
+        cursor.execute("CREATE TABLE IF NOT EXISTS respuestas_encuesta_new (\n            id INTEGER PRIMARY KEY AUTOINCREMENT,\n            encuesta_id INTEGER NOT NULL,\n            pregunta_numero INTEGER NOT NULL,\n            respuesta TEXT NOT NULL,\n            FOREIGN KEY (encuesta_id) REFERENCES encuestas(id)\n        );")
+        cursor.execute("INSERT INTO respuestas_encuesta_new (id, encuesta_id, pregunta_numero, respuesta) SELECT id, encuesta_id, pregunta_numero, respuesta FROM respuestas_encuesta")
+        cursor.execute("DROP TABLE respuestas_encuesta")
+        cursor.execute("ALTER TABLE respuestas_encuesta_new RENAME TO respuestas_encuesta")
 
     # Asegura compatibilidad con bases antiguas sin terapeuta_id.
     cursor.execute("PRAGMA table_info(pacientes)")
     columnas = [col[1] for col in cursor.fetchall()]
     if "terapeuta_id" not in columnas:
         cursor.execute("ALTER TABLE pacientes ADD COLUMN terapeuta_id INTEGER")
+
+    # Asegura compatibilidad con bases antiguas sin tipo en notificaciones.
+    cursor.execute("PRAGMA table_info(notificaciones)")
+    columnas_notif = [col[1] for col in cursor.fetchall()]
+    if "tipo" not in columnas_notif:
+        cursor.execute("ALTER TABLE notificaciones ADD COLUMN tipo TEXT DEFAULT 'manual'")
 
     # Migra la tabla usuarios si la restriccion de rol no incluye 'paciente'.
     cursor.execute(
@@ -137,6 +208,195 @@ def me():
         "nombre": row[4],
         "apellidos": row[5]
     }
+
+@app.route("/vapid_public_key", methods=["GET"])
+def vapid_public_key():
+    return jsonify({"publicKey": VAPID_PUBLIC_KEY})
+
+@app.route("/push/subscribe", methods=["POST"])
+def push_subscribe():
+    if "user_id" not in session:
+        return {"error": "No autenticado"}, 401
+
+    if session.get("rol") != "paciente":
+        return {"error": "Solo para pacientes"}, 403
+
+    data = request.get_json() or {}
+    subscription = data.get("subscription") or data
+    endpoint = subscription.get("endpoint")
+    keys = subscription.get("keys", {})
+    p256dh = keys.get("p256dh")
+    auth = keys.get("auth")
+
+    if not endpoint or not p256dh or not auth:
+        return {"error": "Datos de suscripción incompletos"}, 400
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id FROM pacientes WHERE correo = (SELECT correo FROM usuarios WHERE id = ?)",
+        (session["user_id"],)
+    )
+    paciente_row = cursor.fetchone()
+    if not paciente_row:
+        conn.close()
+        return {"error": "Paciente no encontrado"}, 404
+
+    paciente_id = paciente_row[0]
+    cursor.execute(
+        "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, paciente_id) VALUES (?, ?, ?, ?)",
+        (endpoint, p256dh, auth, paciente_id)
+    )
+    conn.commit()
+    conn.close()
+
+    return {"mensaje": "Suscripción push guardada"}
+
+@app.route("/push/unsubscribe", methods=["POST"])
+def push_unsubscribe():
+    if "user_id" not in session:
+        return {"error": "No autenticado"}, 401
+
+    if session.get("rol") != "paciente":
+        return {"error": "Solo para pacientes"}, 403
+
+    data = request.get_json() or {}
+    endpoint = data.get("endpoint")
+    if not endpoint:
+        return {"error": "Endpoint faltante"}, 400
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    conn.commit()
+    conn.close()
+
+    return {"mensaje": "Suscripción push eliminada"}
+
+
+def enviar_push(paciente_id, titulo, mensaje):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE paciente_id = ?",
+        (paciente_id,)
+    )
+    suscripciones = cursor.fetchall()
+    conn.close()
+
+    payload = json.dumps({
+        "title": titulo,
+        "body": mensaje,
+        "icon": "/assets/img/favicon.png" if os.path.exists(os.path.join(FRONTEND_DIR, "assets/img/favicon.png")) else None,
+        "url": "/dashboard-paciente-home.html"
+    })
+
+    for endpoint, p256dh, auth in suscripciones:
+        try:
+            webpush(
+                subscription_info={
+                    "endpoint": endpoint,
+                    "keys": {
+                        "p256dh": p256dh,
+                        "auth": auth
+                    }
+                },
+                data=payload,
+                vapid_private_key=VAPID_PRIVATE_KEY,
+                vapid_claims=VAPID_CLAIMS
+            )
+        except WebPushException as exc:
+            print("WebPush error:", exc)
+            if exc.response and exc.response.status_code in [404, 410]:
+                conn = conectar()
+                c = conn.cursor()
+                c.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+                conn.commit()
+                conn.close()
+
+
+def obtener_pacientes_sin_encuesta_hoy():
+    fecha_hoy = datetime.date.today().isoformat()
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT p.id, p.nombre, p.apellidos, p.terapeuta_id
+        FROM pacientes p
+        LEFT JOIN encuestas e ON e.paciente_id = p.id AND e.fecha = ? AND e.completada = 1
+        WHERE e.id IS NULL
+          AND p.terapeuta_id IS NOT NULL
+        """,
+        (fecha_hoy,)
+    )
+    filas = cursor.fetchall()
+    conn.close()
+    return filas
+
+
+def enviar_notificaciones_automaticas(periodo_label):
+    pacientes = obtener_pacientes_sin_encuesta_hoy()
+    if not pacientes:
+        return
+
+    now = datetime.datetime.now()
+    periodo_texto = f"({periodo_label})"
+
+    for paciente_id, nombre, apellidos, terapeuta_id in pacientes:
+        mensaje = f"Hola {nombre}, recuerda completar tu encuesta diaria {periodo_texto}."
+        conn = conectar()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            "SELECT 1 FROM notificaciones WHERE paciente_id = ? AND tipo = 'auto' AND DATE(fecha) = ? AND mensaje LIKE ?",
+            (paciente_id, now.date().isoformat(), f"%{periodo_texto}%")
+        )
+        if cursor.fetchone():
+            conn.close()
+            continue
+
+        cursor.execute(
+            "INSERT INTO notificaciones (paciente_id, terapeuta_id, mensaje, enviada, tipo) VALUES (?, ?, ?, 1, 'auto')",
+            (paciente_id, terapeuta_id, mensaje)
+        )
+        conn.commit()
+        conn.close()
+
+        enviar_push(paciente_id, "Recordatorio automático", mensaje)
+
+
+def run_notification_scheduler():
+    last_window = None
+    while True:
+        now = datetime.datetime.now()
+        current_hour = now.hour
+        window = next((hour for hour in AUTO_NOTIFICATION_HOURS if hour == current_hour), None)
+
+        if window is not None:
+            key = (now.date().isoformat(), window)
+            if key != last_window:
+                enviar_notificaciones_automaticas(f"{window}:00")
+                last_window = key
+
+        time.sleep(60)
+
+
+def start_notification_scheduler():
+    scheduler_thread = threading.Thread(target=run_notification_scheduler, daemon=True)
+    scheduler_thread.start()
+
+
+@app.route("/notificar/auto/run", methods=["POST"])
+def trigger_auto_notifications():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    if session.get("rol") not in ["terapeuta", "admin"]:
+        return {"error": "Acceso prohibido"}, 403
+
+    enviar_notificaciones_automaticas("manual")
+    return {"mensaje": "Notificaciones automáticas disparadas"}
+
 
 def conectar():
     conn = sqlite3.connect(DB_PATH)
@@ -223,12 +483,21 @@ def register():
     apellidos = data.get("apellidos")
     telefono = data.get("telefono")
     especialidad = data.get("especialidad")
+    fecha_nacimiento = data.get("fecha_nacimiento")
+    sexo = data.get("sexo")
 
     if not correo or not password:
         return {"mensaje": "Correo y password son obligatorios"}, 400
 
     if rol not in ["admin", "terapeuta", "paciente"]:
         return {"mensaje": "Rol inválido"}, 400
+
+    # Validaciones adicionales para pacientes
+    if rol == "paciente":
+        if not fecha_nacimiento:
+            return {"mensaje": "Fecha de nacimiento es obligatoria para pacientes"}, 400
+        if not sexo or sexo not in ["M", "F", "Otro"]:
+            return {"mensaje": "Sexo es obligatorio para pacientes (M, F, Otro)"}, 400
 
     conn = conectar()
     cursor = conn.cursor()
@@ -281,8 +550,8 @@ def register():
 
             # create a pacientes record linked to this therapist
             cursor.execute(
-                "INSERT INTO pacientes (nombre, apellidos, correo, terapeuta_id) VALUES (?, ?, ?, ?)",
-                (nombre or "", apellidos or "", correo, terapeuta_id)
+                "INSERT INTO pacientes (nombre, apellidos, fecha_nacimiento, sexo, telefono, correo, terapeuta_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (nombre or "", apellidos or "", fecha_nacimiento, sexo, telefono or "", correo, terapeuta_id)
             )
             conn.commit()
     except sqlite3.IntegrityError:
@@ -411,6 +680,73 @@ def obtener_pacientes():
     return jsonify(datos)
 
 
+# 🔹 GET → obtener pacientes con encuesta pendiente hoy
+@app.route("/pacientes/pendientes", methods=["GET"])
+def pacientes_pendientes():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    if session.get("rol") not in ["terapeuta", "admin"]:
+        return {"error": "Acceso prohibido"}, 403
+
+    conn = conectar()
+    cursor = conn.cursor()
+    fecha_hoy = datetime.date.today().isoformat()
+
+    cursor.execute(
+        """
+        SELECT p.*
+        FROM pacientes p
+        LEFT JOIN encuestas e ON e.paciente_id = p.id AND e.fecha = ?
+        WHERE p.terapeuta_id = ?
+        GROUP BY p.id
+        HAVING MAX(CASE WHEN e.completada = 1 THEN 1 ELSE 0 END) = 0
+        """,
+        (fecha_hoy, session["user_id"])
+    )
+
+    columnas = [col[0] for col in cursor.description]
+    filas = cursor.fetchall()
+    datos = [dict(zip(columnas, fila)) for fila in filas]
+    conn.close()
+    return jsonify(datos)
+
+
+# 🔹 POST → enviar recordatorio a un paciente pendiente
+@app.route("/notificar/paciente/<int:paciente_id>", methods=["POST"])
+def notificar_paciente(paciente_id):
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    if session.get("rol") not in ["terapeuta", "admin"]:
+        return {"error": "Acceso prohibido"}, 403
+
+    mensaje = request.get_json().get("mensaje", "Recuerda completar tu encuesta diaria.")
+
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT terapeuta_id FROM pacientes WHERE id = ?", (paciente_id,))
+    row = cursor.fetchone()
+    if not row:
+        conn.close()
+        return {"error": "Paciente no encontrado"}, 404
+
+    if row[0] != session["user_id"] and session.get("rol") != "admin":
+        conn.close()
+        return {"error": "No puedes notificar a este paciente"}, 403
+
+    cursor.execute(
+        "INSERT INTO notificaciones (paciente_id, terapeuta_id, mensaje, enviada) VALUES (?, ?, ?, 1)",
+        (paciente_id, session["user_id"], mensaje)
+    )
+    conn.commit()
+    conn.close()
+
+    enviar_push(paciente_id, "Recordatorio de encuesta diaria", mensaje)
+
+    return {"mensaje": "Recordatorio enviado."}
+
+
 # 🔹 POST → crear paciente
 @app.route("/pacientes", methods=["POST"])
 def crear_paciente():
@@ -448,6 +784,223 @@ def crear_paciente():
     return {"mensaje": "Paciente creado correctamente"}
 
 
+# 🔹 ENCUESTAS
+@app.route("/encuesta/diaria", methods=["GET"])
+def obtener_encuesta_diaria():
+    if "user_id" not in session:
+        return {"error": "No autenticado"}, 401
+
+    if session.get("rol") != "paciente":
+        return {"error": "Solo para pacientes"}, 403
+
+    # Obtener el paciente_id desde usuarios
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM pacientes WHERE correo = (SELECT correo FROM usuarios WHERE id = ?)", (session["user_id"],))
+    paciente_row = cursor.fetchone()
+
+    if not paciente_row:
+        conn.close()
+        return {"error": "Paciente no encontrado"}, 404
+
+    paciente_id = paciente_row[0]
+    fecha_hoy = datetime.date.today().isoformat()
+
+    # Verificar si ya existe una encuesta para hoy
+    cursor.execute("SELECT id, completada FROM encuestas WHERE paciente_id = ? AND fecha = ?", (paciente_id, fecha_hoy))
+    encuesta_row = cursor.fetchone()
+
+    if encuesta_row:
+        encuesta_id, completada = encuesta_row
+        if completada:
+            conn.close()
+            return {"completada": True, "mensaje": "Encuesta ya completada hoy"}
+
+        # Obtener respuestas existentes
+        cursor.execute("SELECT pregunta_numero, respuesta FROM respuestas_encuesta WHERE encuesta_id = ?", (encuesta_id,))
+        respuestas = {row[0]: row[1] for row in cursor.fetchall()}
+        conn.close()
+        return {"encuesta_id": encuesta_id, "respuestas": respuestas}
+
+    # Crear nueva encuesta
+    cursor.execute("INSERT INTO encuestas (paciente_id, fecha) VALUES (?, ?)", (paciente_id, fecha_hoy))
+    nueva_encuesta_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+
+    return {"encuesta_id": nueva_encuesta_id, "respuestas": {}}
+
+
+@app.route("/encuesta/guardar", methods=["POST"])
+def guardar_encuesta():
+    if "user_id" not in session:
+        return {"error": "No autenticado"}, 401
+
+    if session.get("rol") != "paciente":
+        return {"error": "Solo para pacientes"}, 403
+
+    data = request.get_json()
+    encuesta_id = data.get("encuesta_id")
+    respuestas = data.get("respuestas", {})
+
+    if not encuesta_id or not respuestas:
+        return {"error": "Datos incompletos"}, 400
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    # Verificar que la encuesta pertenece al paciente
+    cursor.execute("""
+        SELECT e.id FROM encuestas e
+        JOIN pacientes p ON e.paciente_id = p.id
+        JOIN usuarios u ON p.correo = u.correo
+        WHERE e.id = ? AND u.id = ?
+    """, (encuesta_id, session["user_id"]))
+
+    if not cursor.fetchone():
+        conn.close()
+        return {"error": "Encuesta no encontrada o no autorizada"}, 404
+
+    # Eliminar respuestas anteriores
+    cursor.execute("DELETE FROM respuestas_encuesta WHERE encuesta_id = ?", (encuesta_id,))
+
+    # Insertar nuevas respuestas
+    for pregunta_num, respuesta in respuestas.items():
+        cursor.execute("INSERT INTO respuestas_encuesta (encuesta_id, pregunta_numero, respuesta) VALUES (?, ?, ?)",
+                      (encuesta_id, int(pregunta_num), str(respuesta)))
+
+    # Marcar como completada
+    cursor.execute("UPDATE encuestas SET completada = TRUE WHERE id = ?", (encuesta_id,))
+
+    conn.commit()
+    conn.close()
+
+    return {"mensaje": "Encuesta guardada correctamente"}
+
+
+@app.route("/encuesta/estado", methods=["GET"])
+def estado_encuesta():
+    if "user_id" not in session:
+        return {"error": "No autenticado"}, 401
+
+    if session.get("rol") != "paciente":
+        return {"error": "Solo para pacientes"}, 403
+
+    # Obtener el paciente_id
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM pacientes WHERE correo = (SELECT correo FROM usuarios WHERE id = ?)", (session["user_id"],))
+    paciente_row = cursor.fetchone()
+
+    if not paciente_row:
+        conn.close()
+        return {"completada": False}
+
+    paciente_id = paciente_row[0]
+    fecha_hoy = datetime.date.today().isoformat()
+
+    cursor.execute("SELECT completada FROM encuestas WHERE paciente_id = ? AND fecha = ?", (paciente_id, fecha_hoy))
+    row = cursor.fetchone()
+
+    cursor.execute(
+        "SELECT fecha FROM encuestas WHERE paciente_id = ? AND completada = 1 ORDER BY fecha DESC",
+        (paciente_id,)
+    )
+    completed_rows = [r[0] for r in cursor.fetchall()]
+    conn.close()
+
+    streak = 0
+    today = datetime.date.today()
+    previous_date = None
+
+    for fecha_str in completed_rows:
+        try:
+            fecha = datetime.date.fromisoformat(fecha_str)
+        except ValueError:
+            continue
+
+        if streak == 0:
+            if fecha == today or fecha == today - datetime.timedelta(days=1):
+                streak = 1
+                previous_date = fecha
+            else:
+                break
+        else:
+            if fecha == previous_date - datetime.timedelta(days=1):
+                streak += 1
+                previous_date = fecha
+            else:
+                break
+
+    return {"completada": bool(row and row[0]), "racha": streak}
+
+
+@app.route("/encuesta/progreso", methods=["GET"])
+def encuesta_progreso():
+    """
+    GET /encuesta/progreso?periodo=dia|semana|mes
+    Retorna array de datos de progreso del paciente con promedios diarios
+    """
+    if "id_usuario" not in session:
+        return {"error": "No autenticado"}, 401
+
+    periodo = request.args.get("periodo", "semana")
+    id_usuario = session["id_usuario"]
+
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+
+    # Obtener id_paciente del usuario
+    cursor.execute("SELECT id FROM pacientes WHERE id_usuario = ?", (id_usuario,))
+    paciente_row = cursor.fetchone()
+    if not paciente_row:
+        conn.close()
+        return {"error": "Paciente no encontrado"}, 404
+    
+    id_paciente = paciente_row[0]
+
+    # Calcular fecha inicio según periodo
+    today = datetime.date.today()
+    if periodo == "dia":
+        fecha_inicio = today
+    elif periodo == "semana":
+        fecha_inicio = today - datetime.timedelta(days=6)
+    elif periodo == "mes":
+        fecha_inicio = today - datetime.timedelta(days=29)
+    else:
+        fecha_inicio = today - datetime.timedelta(days=6)
+
+    # Preguntas numéricas (0-10): 1,2,4,5,6,7,9,11,16,17
+    preguntas_numericas = [1, 2, 4, 5, 6, 7, 9, 11, 16, 17]
+
+    # Query: obtener todas las encuestas completadas en el rango
+    cursor.execute("""
+        SELECT DISTINCT DATE(e.fecha) as dia, AVG(CAST(r.respuesta AS FLOAT)) as promedio
+        FROM encuestas e
+        JOIN respuestas_encuesta r ON e.id = r.encuesta_id
+        WHERE e.id_paciente = ? 
+        AND DATE(e.fecha) >= DATE(?)
+        AND e.completada = 1
+        AND r.numero_pregunta IN ({})
+        GROUP BY DATE(e.fecha)
+        ORDER BY dia ASC
+    """.format(','.join('?' * len(preguntas_numericas))), 
+    [id_paciente, fecha_inicio.isoformat()] + preguntas_numericas)
+
+    resultados = cursor.fetchall()
+    conn.close()
+
+    # Convertir a array con dias y promedios
+    datos = []
+    for dia, promedio in resultados:
+        datos.append({
+            "dia": dia,
+            "promedio": round(promedio, 2) if promedio else 0
+        })
+
+    return {"datos": datos, "periodo": periodo}
+
+
 #logout
 @app.route("/logout", methods=["POST", "GET"])
 def logout():
@@ -456,4 +1009,6 @@ def logout():
 
 if __name__ == "__main__":
     initialize_database()
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        start_notification_scheduler()
     app.run(debug=True)

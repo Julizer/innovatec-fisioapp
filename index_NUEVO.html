@@ -24,6 +24,37 @@
     </div>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+
+    <script>
+    // Redirección automática si hay sesión activa
+    async function checkActiveSession() {
+        try {
+            const res = await fetch("/me", {
+                method: "GET",
+                credentials: "include"
+            });
+            
+            if (res.ok) {
+                const userData = await res.json();
+                const rol = userData.rol;
+                
+                // Si hay sesión activa, redirigir al dashboard correspondiente
+                if (rol === "paciente") {
+                    window.location.href = "dashboard-paciente-home.html";
+                } else if (rol === "terapeuta") {
+                    window.location.href = "dashboard-terapeuta-home.html";
+                } else if (rol === "admin") {
+                    window.location.href = "dashboard-admin.html";
+                }
+            }
+        } catch (error) {
+            console.log("No hay sesión activa");
+        }
+    }
+
+    // Verificar sesión al cargar la página
+    document.addEventListener("DOMContentLoaded", checkActiveSession);
+    </script>
 </body>
 
 </html>

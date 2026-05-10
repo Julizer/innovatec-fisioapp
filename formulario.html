@@ -5,31 +5,391 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
-  <title>Pruebas</title>
+  <title>Evaluación Diaria del Paciente</title>
   <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
   <link rel="stylesheet" href="assets/fonts/material-icons.min.css">
   <link rel="stylesheet" href="assets/css/bss-overrides.css">
   <link rel="stylesheet" href="assets/css/Fading%20animation.css">
   <link rel="stylesheet" href="assets/css/styles.css">
+  <style>
+    .form-check {
+      padding-left: 1.5rem;
+      margin-bottom: 0.8rem;
+      display: flex;
+      align-items: center;
+    }
+    .form-check-input {
+      width: 1.4rem;
+      height: 1.4rem;
+      border: 2px solid #0d6efd;
+      box-shadow: none;
+      transition: all 0.2s ease;
+      margin-left: 0;
+      margin-top: 0;
+      flex-shrink: 0;
+    }
+    .form-check-input:checked {
+      background-color: #0d6efd;
+      border-color: #0d6efd;
+    }
+    .form-check-input:focus {
+      box-shadow: 0 0 0 0.25rem rgba(13, 110, 253, 0.25);
+    }
+    .form-check-label {
+      color: #212529;
+      font-weight: 600;
+      margin-left: 0.75rem;
+      margin-bottom: 0;
+      word-break: break-word;
+      cursor: pointer;
+    }
+    
+    /* Ensure form container doesn't overflow */
+    .card-body {
+      overflow-x: hidden;
+    }
+  </style>
 </head>
 
 <body>
+  <div class="container mt-4">
+    <div class="row justify-content-center">
+      <div class="col-md-8">
+        <div class="card">
+          <div class="card-header bg-primary text-white">
+            <h3 class="card-title mb-0">Evaluación Diaria del Paciente</h3>
+          </div>
+          <div class="card-body">
+            <form id="surveyForm">
 
-  <div class="container">
+              <!-- Pregunta 1 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">1. ¿Qué nivel de dolor sientes hoy en la zona afectada?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q1" name="q1" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q1-value">5</span>
+                </div>
+              </div>
 
-    <form class="row">
+              <!-- Pregunta 2 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">2. ¿Cuánto ha disminuido tu dolor comparado con días anteriores?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q2" name="q2" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q2-value">5</span>
+                </div>
+              </div>
 
-      <div class="col-6">
-        <input typer="email" class="form-control" id="emailInput" placeholder="escribe tu email">
+              <!-- Pregunta 3 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">3. ¿Sientes más movilidad que ayer?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q3" id="q3-si" value="Si">
+                  <label class="form-check-label" for="q3-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q3" id="q3-no" value="No">
+                  <label class="form-check-label" for="q3-no">No</label>
+                </div>
+              </div>
 
+              <!-- Pregunta 4 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">4. ¿Qué tanta movilidad tienes hoy en la zona afectada?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q4" name="q4" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q4-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 5 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">5. ¿Qué tan fácil fue realizar los ejercicios?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q5" name="q5" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q5-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 6 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">6. ¿Qué tanto puedes mover la articulación sin dificultad?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q6" name="q6" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q6-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 7 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">7. ¿Qué tanto control tienes sobre el movimiento?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q7" name="q7" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q7-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 8 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">8. ¿Puedes realizar actividades que antes no podías?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q8" id="q8-si" value="Si">
+                  <label class="form-check-label" for="q8-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q8" id="q8-no" value="No">
+                  <label class="form-check-label" for="q8-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 9 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">9. ¿Qué tan cansado te sientes después de los ejercicios?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q9" name="q9" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q9-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 10 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">10. ¿Sentiste dolor durante los ejercicios?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q10" id="q10-si" value="Si">
+                  <label class="form-check-label" for="q10-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q10" id="q10-no" value="No">
+                  <label class="form-check-label" for="q10-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 11 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">11. ¿Cuánto dolor sentiste durante los ejercicios?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q11" name="q11" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q11-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 12 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">12. ¿El dolor empeoró después de realizar los ejercicios?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q12" id="q12-si" value="Si">
+                  <label class="form-check-label" for="q12-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q12" id="q12-no" value="No">
+                  <label class="form-check-label" for="q12-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 13 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">13. ¿Notas inflamación en la zona afectada?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q13" id="q13-si" value="Si">
+                  <label class="form-check-label" for="q13-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q13" id="q13-no" value="No">
+                  <label class="form-check-label" for="q13-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 14 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">14. ¿Tuviste hoy alguna molestia fuera de lo normal?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q14" id="q14-si" value="Si">
+                  <label class="form-check-label" for="q14-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q14" id="q14-no" value="No">
+                  <label class="form-check-label" for="q14-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 15 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">15. ¿Realizaste todos los ejercicios indicados?</label>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q15" id="q15-si" value="Si">
+                  <label class="form-check-label" for="q15-si">Sí</label>
+                </div>
+                <div class="form-check">
+                  <input class="form-check-input" type="radio" name="q15" id="q15-no" value="No">
+                  <label class="form-check-label" for="q15-no">No</label>
+                </div>
+              </div>
+
+              <!-- Pregunta 16 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">16. ¿Qué tanto sientes que has mejorado hoy?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q16" name="q16" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q16-value">5</span>
+                </div>
+              </div>
+
+              <!-- Pregunta 17 -->
+              <div class="mb-4">
+                <label class="form-label fw-bold">17. ¿Qué tan satisfecho estás con tu progreso?</label>
+                <div class="d-flex justify-content-between mb-2">
+                  <span>0 = Nada</span>
+                  <span>10 = Completamente</span>
+                </div>
+                <input type="range" class="form-range" id="q17" name="q17" min="0" max="10" value="5">
+                <div class="text-center">
+                  <span class="badge bg-secondary" id="q17-value">5</span>
+                </div>
+              </div>
+
+              <div class="d-grid gap-2 mt-4">
+                <button type="submit" class="btn btn-primary btn-lg" id="submitBtn">
+                  <span class="spinner-border spinner-border-sm d-none" role="status"></span>
+                  Enviar Evaluación
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       </div>
-
-    </form>
-
-
+    </div>
   </div>
 
+  <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+  <script>
+    // Update range value displays
+    document.querySelectorAll('input[type="range"]').forEach(range => {
+      const valueDisplay = document.getElementById(range.id + '-value');
+      range.addEventListener('input', () => {
+        valueDisplay.textContent = range.value;
+      });
+    });
 
+    // Form submission
+    document.getElementById('surveyForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
 
+      const submitBtn = document.getElementById('submitBtn');
+      const spinner = submitBtn.querySelector('.spinner-border');
+      submitBtn.disabled = true;
+      spinner.classList.remove('d-none');
 
+      try {
+        // Get current survey
+        const surveyResponse = await fetch('/encuesta/diaria');
+        const surveyData = await surveyResponse.json();
+
+        if (surveyData.error) {
+          throw new Error(surveyData.error);
+        }
+
+        // Collect form data
+        const formData = new FormData(e.target);
+        const respuestas = {};
+
+        for (let [key, value] of formData.entries()) {
+          const questionNum = key.replace('q', '');
+          respuestas[questionNum] = value;
+        }
+
+        // Save survey
+        const saveResponse = await fetch('/encuesta/guardar', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            encuesta_id: surveyData.encuesta_id,
+            respuestas: respuestas
+          })
+        });
+
+        const saveData = await saveResponse.json();
+
+        if (saveData.error) {
+          throw new Error(saveData.error);
+        }
+
+        // Success
+        alert('¡Evaluación enviada correctamente!');
+        window.location.href = 'dashboard-paciente-home.html';
+
+      } catch (error) {
+        console.error('Error:', error);
+        alert('Error al enviar la evaluación: ' + error.message);
+      } finally {
+        submitBtn.disabled = false;
+        spinner.classList.add('d-none');
+      }
+    });
+
+    // Load existing responses if any
+    window.addEventListener('DOMContentLoaded', async () => {
+      try {
+        const response = await fetch('/encuesta/diaria');
+        const data = await response.json();
+
+        if (data.respuestas) {
+          // Load existing responses
+          Object.entries(data.respuestas).forEach(([questionNum, respuesta]) => {
+            const inputName = 'q' + questionNum;
+            const inputs = document.querySelectorAll(`input[name="${inputName}"]`);
+
+            inputs.forEach(input => {
+              if (input.type === 'range') {
+                input.value = respuesta;
+                document.getElementById(input.id + '-value').textContent = respuesta;
+              } else if (input.type === 'radio' && input.value === respuesta) {
+                input.checked = true;
+              }
+            });
+          });
+        }
+      } catch (error) {
+        console.error('Error loading existing responses:', error);
+      }
+    });
+  </script>
 </body>
+</html>

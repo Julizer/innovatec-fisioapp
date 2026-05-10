@@ -1,8 +1,18 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="en" style="margin: auto;padding-bottom: 80px;height: 120px;bottom: 0;width: 100%;/*max-width: 430px;*//*background: #fff;*/border-top: 1px solid #ddd;color: #555;text-decoration: none;">
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <title>Pruebas</title>
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
@@ -30,6 +40,9 @@
         </div>
     </div>
 
+    <!-- 🔹 PACIENTES QUE NO COMPLETARON ENCUESTA HOY -->
+    <div id="pendientes-pacientes" class="mb-3"></div>
+
     <!-- 🔹 LISTA DINÁMICA -->
     <div id="lista-pacientes"></div>
 
@@ -45,6 +58,7 @@
     </nav>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
     <script>
         const sexos = {
             'M': 'Masculino',
@@ -52,32 +66,109 @@
         };
     </script>
     <script>
-    async function cargarPacientes() {
-        const contenedor = document.getElementById("lista-pacientes");
-
+    async function enviarRecordatorio(pacienteId, nombre, mensaje) {
         try {
-            const res = await fetch("/pacientes", {
-                credentials: "include"
+            const res = await fetch(`/notificar/paciente/${pacienteId}`, {
+                method: "POST",
+                credentials: "include",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({mensaje})
             });
 
-            if (res.status === 401) {
+            const data = await res.json();
+            if (!res.ok) {
+                throw new Error(data.error || 'Error enviando recordatorio');
+            }
+
+            alert(`Notificación enviada a ${nombre}`);
+            cargarPacientes();
+        } catch (error) {
+            console.error("Error enviando notificación:", error);
+            alert("No se pudo enviar la notificación. Inténtalo de nuevo.");
+        }
+    }
+
+    async function enviarRecordatorioNormal(pacienteId, nombre) {
+        await enviarRecordatorio(pacienteId, nombre, `Hola ${nombre}, recuerda completar tu encuesta diaria.`);
+    }
+
+    async function enviarPruebaNotificacion(pacienteId, nombre) {
+        await enviarRecordatorio(pacienteId, nombre, `Prueba de notificación: este mensaje confirma que tu dispositivo está suscrito.`);
+    }
+
+    async function cargarPacientes() {
+        const contenedor = document.getElementById("lista-pacientes");
+        const pendientesCont = document.getElementById("pendientes-pacientes");
+
+        try {
+            const [resPacientes, resPendientes] = await Promise.all([
+                fetch("/pacientes", {credentials: "include"}),
+                fetch("/pacientes/pendientes", {credentials: "include"})
+            ]);
+
+            if (resPacientes.status === 401 || resPendientes.status === 401) {
                 window.location.href = "index-sign_in.html";
                 return;
             }
 
-            if (res.status === 403) {
+            if (resPacientes.status === 403 || resPendientes.status === 403) {
                 alert("No tienes permisos");
                 return;
             }
-            const pacientes = await res.json();
+
+            const pacientes = await resPacientes.json();
+            const pendientes = await resPendientes.json();
+            const pendientesIds = new Set(pendientes.map(p => p.id));
+
+            pendientesCont.innerHTML = "";
+            if (pendientes.length === 0) {
+                pendientesCont.innerHTML = `
+                    <div class="card mb-3 border-success">
+                        <div class="card-body">
+                            <h4 class="card-title">Pacientes al día</h4>
+                            <p class="mb-0">Todos tus pacientes completaron la encuesta diaria de hoy.</p>
+                        </div>
+                    </div>
+                `;
+            } else {
+                pendientesCont.innerHTML = `
+                    <div class="card mb-3 border-warning">
+                        <div class="card-body">
+                            <h4 class="card-title">Pacientes sin encuesta hoy</h4>
+                            <p class="text-muted mb-3">Estos pacientes aún no han completado la evaluación diaria de hoy.</p>
+                            ${pendientes.map(p => `
+                                <div class="border rounded p-3 mb-2">
+                                    <div class="d-flex justify-content-between align-items-start">
+                                        <div>
+                                            <strong>${p.nombre} ${p.apellidos}</strong>
+                                            <div class="text-muted small">${p.correo || 'Sin correo'}</div>
+                                        </div>
+                                        <div class="btn-group" role="group">
+                                            <button class="btn btn-sm btn-outline-primary" onclick="enviarRecordatorioNormal(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')">
+                                                Enviar recordatorio
+                                            </button>
+                                            <button class="btn btn-sm btn-outline-success" onclick="enviarPruebaNotificacion(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')">
+                                                Probar notificación
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            `).join('')}
+                        </div>
+                    </div>
+                `;
+            }
 
             contenedor.innerHTML = "";
-
             pacientes.forEach(p => {
+                const badge = pendientesIds.has(p.id)
+                    ? `<span class="badge bg-warning text-dark ms-2">Pendiente</span>`
+                    : `<span class="badge bg-success ms-2">Completado</span>`;
+
                 contenedor.innerHTML += `
                     <div class="card mb-3">
                         <div class="card-body">
-                            <h4 class="card-title">${p.nombre} ${p.apellidos}</h4>
+                            <h4 class="card-title">${p.nombre} ${p.apellidos} ${badge}</h4>
                             <h6 class="text-muted">${p.correo || "Sin correo"}</h6>
                             <p class="mb-0">Tel: ${p.telefono || "N/A"}</p>
                             <p class="mb-0">Fecha de nacimiento: ${p.fecha_nacimiento || "N/A"}</p>
@@ -89,6 +180,7 @@
 
         } catch (error) {
             console.error("Error cargando pacientes:", error);
+            pendientesCont.innerHTML = "";
             contenedor.innerHTML = "<p>Error cargando pacientes</p>";
         }
     }

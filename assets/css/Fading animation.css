@@ -1,13 +1,13 @@
 @keyframes fadeIn {
   from {
-    opacity: 0.3;
+    opacity: 0;
   }
   to {
     opacity: 1;
   }
 }
 
-Section {
+section {
   animation: fadeIn 0.15s ease-out;
 }
 

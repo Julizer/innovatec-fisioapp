@@ -1,8 +1,18 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="en" style="margin: auto;padding-bottom: 80px;height: 120px;bottom: 0;width: 100%;/*max-width: 430px;*//*background: #fff;*/border-top: 1px solid #ddd;color: #555;text-decoration: none;">
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <title>Pruebas</title>
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
@@ -40,6 +50,53 @@
                 <p class="card-text">Excelente avance!</p><a class="card-link" href="#">Ver gráfica del mes pasado</a><a class="card-link" href="#">Mas detalles</a>
             </div>
         </div>
+        <div class="border border-secondary ms-4 me-4 mt-3 mb-2 pb-0 border-top opacity-25"></div>
+        <div class="card mb-3">
+            <div class="card-body">
+                <div class="d-flex align-items-center mb-3">
+                    <div class="streak-badge d-flex align-items-center justify-content-center me-3">
+                        <span class="flame">🔥</span>
+                    </div>
+                    <div>
+                        <h4 class="card-title mb-1">Evaluación Diaria</h4>
+                        <p class="mb-0 text-muted">Racha actual: <strong id="streakCount">0</strong> días</p>
+                    </div>
+                </div>
+                <p class="card-text">Completa tu evaluación diaria para que tu fisioterapeuta pueda seguir tu progreso.</p>
+                <div id="surveyNotice" class="alert alert-warning d-none" role="alert"></div>
+                <div id="pushStatus" class="alert d-none py-2 mb-3" role="alert"></div>
+                <div class="d-grid gap-2">
+                    <button class="btn btn-success" id="surveyBtn" onclick="checkSurveyStatus()">
+                        <i class="material-icons me-2" style="vertical-align: middle;">assignment</i>
+                        Realizar Evaluación Diaria
+                    </button>
+                </div>
+            </div>
+        </div>
+        <style>
+            .streak-badge {
+                width: 48px;
+                height: 48px;
+                border-radius: 18px;
+                background: linear-gradient(135deg, #ffc107 0%, #fd7e14 100%);
+                color: white;
+                font-size: 1.4rem;
+                box-shadow: 0 6px 14px rgba(253, 126, 20, 0.25);
+                animation: pulseFlame 1.8s ease-in-out infinite;
+            }
+            .streak-badge .flame {
+                display: inline-block;
+                animation: flameBounce 0.8s ease-in-out infinite;
+            }
+            @keyframes pulseFlame {
+                0%, 100% { transform: scale(1); }
+                50% { transform: scale(1.05); }
+            }
+            @keyframes flameBounce {
+                0%, 100% { transform: translateY(0); }
+                50% { transform: translateY(-3px); }
+            }
+        </style>
         <div class="border border-secondary ms-4 me-4 mt-4 mb-3 pb-0 border-top opacity-25"></div>
         <div class="card mb-3">
             <div class="card-body">
@@ -71,6 +128,156 @@
     </nav>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
+    <script>
+        function urlBase64ToUint8Array(base64String) {
+            const padding = '='.repeat((4 - base64String.length % 4) % 4);
+            const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+            const rawData = window.atob(base64);
+            const outputArray = new Uint8Array(rawData.length);
+            for (let i = 0; i < rawData.length; ++i) {
+                outputArray[i] = rawData.charCodeAt(i);
+            }
+            return outputArray;
+        }
+
+        async function registerPushWorker() {
+            if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+                return;
+            }
+
+            try {
+                const registration = await navigator.serviceWorker.register('/service-worker.js');
+                let permission = Notification.permission;
+                if (permission === 'default') {
+                    permission = await Notification.requestPermission();
+                }
+
+                if (permission !== 'granted') {
+                    await updatePushStatus();
+                    return;
+                }
+
+                const keyResponse = await fetch('/vapid_public_key');
+                const keyData = await keyResponse.json();
+                const applicationServerKey = urlBase64ToUint8Array(keyData.publicKey);
+
+                let subscription = await registration.pushManager.getSubscription();
+                if (!subscription) {
+                    subscription = await registration.pushManager.subscribe({
+                        userVisibleOnly: true,
+                        applicationServerKey
+                    });
+                }
+
+                if (subscription) {
+                    await fetch('/push/subscribe', {
+                        method: 'POST',
+                        credentials: 'include',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ subscription })
+                    });
+                }
+
+                await updatePushStatus();
+            } catch (error) {
+                console.error('Error registering push worker:', error);
+                await updatePushStatus();
+            }
+        }
+
+        async function updatePushStatus() {
+            const statusEl = document.getElementById('pushStatus');
+            if (!statusEl || !('serviceWorker' in navigator) || !('PushManager' in window)) {
+                return;
+            }
+
+            try {
+                const registration = await navigator.serviceWorker.getRegistration();
+                const subscription = registration ? await registration.pushManager.getSubscription() : null;
+                const permission = Notification.permission;
+
+                statusEl.className = 'alert py-2 mb-3';
+                if (permission === 'granted' && subscription) {
+                    statusEl.classList.add('alert-success');
+                    statusEl.textContent = 'Notificaciones activas: recibirás recordatorios en tu navegador.';
+                } else if (permission === 'denied') {
+                    statusEl.classList.add('alert-danger');
+                    statusEl.textContent = 'Notificaciones bloqueadas. Activa notificaciones en el navegador para recibir recordatorios.';
+                } else {
+                    statusEl.classList.add('alert-secondary');
+                    statusEl.textContent = 'Notificaciones no activadas. Permite notificaciones para recibir recordatorios push.';
+                }
+                statusEl.classList.remove('d-none');
+            } catch (error) {
+                console.error('Error updating push status:', error);
+            }
+        }
+
+        async function checkSurveyStatus() {
+            const btn = document.getElementById('surveyBtn');
+            const originalText = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-border spinner-border-sm me-2" role="status"></span>Cargando...';
+
+            try {
+                const response = await fetch('/encuesta/estado');
+                const data = await response.json();
+
+                if (data.racha !== undefined) {
+                    document.getElementById('streakCount').textContent = data.racha;
+                }
+
+                if (data.completada) {
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-secondary');
+                    btn.innerHTML = '<i class="material-icons me-2" style="vertical-align: middle;">check_circle</i>Evaluación Completada';
+                    alert('¡Ya completaste tu evaluación diaria hoy! Gracias por tu participación.');
+                } else {
+                    window.location.href = 'formulario.html';
+                }
+            } catch (error) {
+                console.error('Error checking survey status:', error);
+                alert('Error al verificar el estado de la evaluación. Inténtalo de nuevo.');
+                btn.disabled = false;
+                btn.innerHTML = originalText;
+            }
+        }
+
+        // Check survey status on page load
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const response = await fetch('/encuesta/estado');
+                const data = await response.json();
+
+                if (data.racha !== undefined) {
+                    const streakElement = document.getElementById('streakCount');
+                    if (streakElement) {
+                        streakElement.textContent = data.racha;
+                    }
+                }
+
+                const notice = document.getElementById('surveyNotice');
+                        if (!data.completada && notice) {
+                    notice.textContent = 'Aún no has completado tu encuesta diaria. Hazlo ahora para que tu fisioterapeuta pueda revisar tu progreso.';
+                    notice.classList.remove('d-none');
+                }
+
+                if (data.completada) {
+                    const btn = document.getElementById('surveyBtn');
+                    btn.classList.remove('btn-success');
+                    btn.classList.add('btn-secondary');
+                    btn.innerHTML = '<i class="material-icons me-2" style="vertical-align: middle;">check_circle</i>Evaluación Completada';
+                    btn.onclick = () => alert('¡Ya completaste tu evaluación diaria hoy! Gracias por tu participación.');
+                }
+
+                await registerPushWorker();
+                await updatePushStatus();
+            } catch (error) {
+                console.error('Error checking survey status on load:', error);
+            }
+        });
+    </script>
 </body>
 
 </html>

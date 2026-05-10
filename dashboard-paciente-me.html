@@ -1,8 +1,18 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="en" style="margin: auto;padding-bottom: 80px;height: 120px;bottom: 0;width: 100%;/*max-width: 430px;*//*background: #fff;*/border-top: 1px solid #ddd;color: #555;text-decoration: none;">
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <title>Pruebas</title>
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
@@ -16,11 +26,12 @@
     <section class="mt-3">
         <h1 class="ms-3">Usted!</h1>
         <div id="mi-terapeuta" class="ms-4 mt-2 mb-2 text-muted">Cargando información de tu terapeuta...</div>
-        <p class="ms-4 mt-0 pt-0 mb-0">Echa un vistazo a tu ultimo paciente:</p>
+        <p class="ms-4 mt-0 pt-0 mb-0">¡Eche un vistazo a su progreso!:</p>
         <div class="border border-secondary ms-4 me-4 mt-4 mb-0 pb-0 border-top opacity-25"></div>
         <div class="card mb-3">
             <div class="card-body">
-                <h4 class="card-title">Encuesta de Salud</h4><button class="btn btn-primary" type="button">Empezar</button><img class="ms-8 me-0" src="assets/img/ca378083-a3bf-4d16-a316-600d39332ac7.png" width="116" height="56">
+                <h4 class="card-title">Encuesta de Salud</h4>
+                <button class="btn btn-primary" type="button">Empezar</button>
             </div>
         </div>
         <div class="border border-secondary ms-4 me-4 mt-4 mb-0 pb-0 border-top opacity-25"></div>
@@ -37,6 +48,7 @@
     </nav>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
     <script>
     async function cargarTerapeuta(){
         const el = document.getElementById('mi-terapeuta');

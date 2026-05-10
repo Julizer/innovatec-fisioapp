@@ -1,8 +1,18 @@
 <!DOCTYPE html>
-<html data-bs-theme="light" lang="en" style="margin: auto;padding-bottom: 80px;height: 120px;bottom: 0;width: 100%;/*max-width: 430px;*//*background: #fff;*/border-top: 1px solid #ddd;color: #555;text-decoration: none;">
+<html lang="en">
 
 <head>
     <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
     <title>Pruebas</title>
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
@@ -10,6 +20,7 @@
     <link rel="stylesheet" href="assets/css/bss-overrides.css">
     <link rel="stylesheet" href="assets/css/Fading%20animation.css">
     <link rel="stylesheet" href="assets/css/styles.css">
+    <script src="assets/js/qrcode.min.js"></script>
 </head>
 
 <body>
@@ -26,16 +37,31 @@
             </div>
         </div>
 
+        <div class="card mb-3 ms-3 me-3">
+            <div class="card-body">
+                <h4 class="card-title">Apariencia</h4>
+                <div class="form-check form-switch">
+                    <input class="form-check-input" type="checkbox" id="dark-mode-toggle">
+                    <label class="form-check-label" for="dark-mode-toggle">Activar modo oscuro</label>
+                </div>
+            </div>
+        </div>
+
         <div id="codigo-card" class="card mb-3 ms-3 me-3" style="display:none;">
             <div class="card-body d-flex justify-content-between align-items-center">
                 <div>
                     <h5 class="card-title mb-0">Tu código de terapeuta</h5>
-                    <small id="codigo-terapeuta" class="text-muted"></small>
+                    <small id="codigo-terapeuta" class="text-muted">Cargando...</small>
                 </div>
                 <div class="text-center">
-                    <img id="codigo-qr" src="" alt="QR" style="width:120px;height:120px;display:block;margin-bottom:8px;" />
+                    <div id="codigo-qr" style="display:inline-block;margin-bottom:8px;">
+                        <div class="text-muted" style="width:120px;height:120px;display:flex;align-items:center;justify-content:center;border:1px solid #dee2e6;">
+                            <small>Sin código</small>
+                        </div>
+                    </div>
                     <div>
-                        <button class="btn btn-sm btn-outline-secondary" onclick="copyCodigo()">Copiar</button>
+                        <button class="btn btn-sm btn-outline-secondary me-1" onclick="copyCodigo()">Copiar</button>
+                        <button class="btn btn-sm btn-outline-primary" onclick="downloadQR()">Descargar QR</button>
                     </div>
                 </div>
             </div>
@@ -53,7 +79,14 @@
     </nav>
     <script src="assets/bootstrap/js/bootstrap.min.js"></script>
     <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
     <script>
+    // Verificar que QRCode esté disponible
+    window.addEventListener('load', function() {
+        if (typeof QRCode === 'undefined') {
+            console.warn('QRCode library not loaded, falling back to text display');
+        }
+    });
     async function fetchMe() {
         try {
             const res = await fetch('/me', { credentials: 'include' });
@@ -64,10 +97,45 @@
             const data = await res.json();
             document.getElementById('mi-correo').textContent = data.correo || '';
             if (data.rol === 'terapeuta') {
-                document.getElementById('codigo-terapeuta').textContent = data.codigo || '';
-                const qr = document.getElementById('codigo-qr');
+                document.getElementById('codigo-terapeuta').textContent = data.codigo || 'Sin código asignado';
+                const qrContainer = document.getElementById('codigo-qr');
                 if (data.codigo) {
-                    qr.src = `https://chart.googleapis.com/chart?cht=qr&chs=200x200&chl=${encodeURIComponent(data.codigo)}`;
+                    // Mostrar indicador de carga
+                    qrContainer.innerHTML = '<div class="text-muted" style="width:120px;height:120px;display:flex;align-items:center;justify-content:center;border:1px solid #dee2e6;"><small>Generando QR...</small></div>';
+
+                    try {
+                        // Verificar que QRCode esté disponible
+                        if (typeof QRCode === 'undefined') {
+                            throw new Error('QRCode library not available');
+                        }
+
+                        // Pequeño delay para mostrar el indicador de carga
+                        setTimeout(() => {
+                            // Limpiar contenedor
+                            qrContainer.innerHTML = '';
+                            // Generar nuevo código QR
+                            new QRCode(qrContainer, {
+                                text: data.codigo,
+                                width: 120,
+                                height: 120,
+                                colorDark: "#000000",
+                                colorLight: "#ffffff",
+                                correctLevel: QRCode.CorrectLevel.H
+                            });
+                        }, 200);
+                    } catch (error) {
+                        console.error('Error generando QR:', error);
+                        // Fallback: mostrar código como texto formateado
+                        qrContainer.innerHTML = `
+                            <div style="width:120px;height:120px;display:flex;flex-direction:column;align-items:center;justify-content:center;border:1px solid #dee2e6;background:#f8f9fa;padding:8px;text-align:center;">
+                                <div style="font-size:10px;margin-bottom:4px;">Código:</div>
+                                <div style="font-weight:bold;font-size:14px;word-break:break-all;">${data.codigo}</div>
+                            </div>
+                        `;
+                    }
+                } else {
+                    // No hay código asignado
+                    qrContainer.innerHTML = '<div class="text-muted" style="width:120px;height:120px;display:flex;align-items:center;justify-content:center;border:1px solid #dee2e6;"><small>Sin código</small></div>';
                 }
                 document.getElementById('codigo-card').style.display = 'block';
             }
@@ -82,6 +150,33 @@
         navigator.clipboard?.writeText(codigo).then(() => {
             alert('Código copiado');
         }).catch(() => { alert('No se pudo copiar'); });
+    }
+
+    function downloadQR() {
+        const qrContainer = document.getElementById('codigo-qr');
+        const canvas = qrContainer.querySelector('canvas');
+
+        if (canvas) {
+            // Si hay canvas (QR generado), descargar como imagen
+            const link = document.createElement('a');
+            link.download = 'codigo-terapeuta-qr.png';
+            link.href = canvas.toDataURL('image/png');
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        } else {
+            // Si no hay canvas (fallback), copiar el código al portapapeles
+            const codigo = document.getElementById('codigo-terapeuta').textContent;
+            if (codigo && codigo !== 'Cargando...') {
+                navigator.clipboard?.writeText(codigo).then(() => {
+                    alert('Código copiado al portapapeles (QR no disponible para descarga)');
+                }).catch(() => {
+                    alert('Código: ' + codigo + '\n\nCópialo manualmente');
+                });
+            } else {
+                alert('Código no disponible');
+            }
+        }
     }
 
     async function logout() {
