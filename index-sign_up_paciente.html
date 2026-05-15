@@ -9,6 +9,68 @@
     <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
     <link rel="stylesheet" href="assets/css/Fading%20animation.css">
     <link rel="stylesheet" href="assets/css/styles.min.css">
+    <style>
+        :root {
+            --bs-primary: #0CBD97;
+            --bs-primary-rgb: 12, 189, 151;
+        }
+        .btn-primary {
+            --bs-btn-color: #fff;
+            --bs-btn-bg: #0CBD97;
+            --bs-btn-border-color: #0CBD97;
+            --bs-btn-hover-color: #fff;
+            --bs-btn-hover-bg: #0a9d7f;
+            --bs-btn-hover-border-color: #0a9d7f;
+            --bs-btn-active-color: #fff;
+            --bs-btn-active-bg: #0a9d7f;
+            --bs-btn-active-border-color: #0a9d7f;
+            --bs-btn-disabled-color: #fff;
+            --bs-btn-disabled-bg: #0CBD97;
+            --bs-btn-disabled-border-color: #0CBD97;
+            background-color: #0CBD97;
+            border-color: #0CBD97;
+            --bs-btn-focus-shadow-rgb: 12, 189, 151;
+        }
+        .btn-primary:hover {
+            background-color: #0a9d7f;
+            border-color: #0a9d7f;
+        }
+        .btn-outline-primary {
+            --bs-btn-color: #0CBD97;
+            --bs-btn-border-color: #0CBD97;
+            --bs-btn-hover-color: #fff;
+            --bs-btn-hover-bg: #0CBD97;
+            --bs-btn-hover-border-color: #0CBD97;
+            --bs-btn-active-color: #fff;
+            --bs-btn-active-bg: #0a9d7f;
+            --bs-btn-active-border-color: #0a9d7f;
+            --bs-btn-disabled-color: #0CBD97;
+            --bs-btn-disabled-bg: transparent;
+            --bs-btn-disabled-border-color: #0CBD97;
+            color: #0CBD97;
+            border-color: #0CBD97;
+            --bs-btn-focus-shadow-rgb: 12, 189, 151;
+        }
+        .btn-outline-primary:hover {
+            background-color: #0CBD97;
+            border-color: #0CBD97;
+        }
+        .btn:focus,
+        .btn:focus-visible {
+            box-shadow: 0 0 0 0.25rem rgba(12, 189, 151, 0.25);
+        }
+        .form-control:focus,
+        .form-select:focus {
+            border-color: #0CBD97;
+            box-shadow: 0 0 0 0.25rem rgba(12, 189, 151, 0.25);
+        }
+        a {
+            color: #0CBD97;
+        }
+        a:hover {
+            color: #0a9d7f;
+        }
+    </style>
 </head>
 
 <body>
@@ -26,7 +88,7 @@
                 <label for="codigo_terapeuta" class="form-label">Código de tu terapeuta</label>
                 <div class="input-group">
                     <input id="codigo_terapeuta" type="text" class="form-control" placeholder="Ej: ABC12345" required>
-                    <button id="verificar-codigo" class="btn btn-outline-secondary" type="button" onclick="verificarCodigo()">Verificar</button>
+                    <button id="verificar-codigo" class="btn btn-outline-primary" type="button" onclick="verificarCodigo()">Verificar</button>
                 </div>
                 <div id="terapeuta-info" class="form-text mt-2"></div>
             </div>
