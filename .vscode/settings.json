@@ -1,4 +1,7 @@
 {
     "liveServer.settings.port": 5501,
-    "python-envs.defaultEnvManager": "ms-python.python:venv"
+    "python-envs.defaultEnvManager": "ms-python.python:venv",
+    "chat.tools.terminal.autoApprove": {
+        "&": true
+    }
 }
