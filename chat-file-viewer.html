@@ -1,0 +1,121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>Visor de archivo</title>
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <style>
+        body { padding: 1rem; }
+        .viewer-wrap { max-width: 980px; margin: 0 auto; }
+        .viewer-box {
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 12px;
+            padding: 0.75rem;
+            min-height: 260px;
+        }
+        .viewer-box img, .viewer-box video, .viewer-box audio, .viewer-box iframe {
+            width: 100%;
+            border-radius: 8px;
+        }
+        .text-preview {
+            white-space: pre-wrap;
+            font-family: Consolas, Monaco, monospace;
+            font-size: 0.9rem;
+            line-height: 1.35;
+        }
+    </style>
+</head>
+<body>
+    <div class="viewer-wrap">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h4 class="mb-0" id="fileTitle">Archivo</h4>
+            <div>
+                <a id="downloadBtn" class="btn btn-sm btn-outline-primary" href="#" download>Descargar</a>
+                <button class="btn btn-sm btn-outline-secondary" onclick="history.back()">Volver</button>
+            </div>
+        </div>
+        <div class="text-muted mb-2" id="fileMeta"></div>
+        <div id="viewer" class="viewer-box"></div>
+    </div>
+
+    <script>
+        function qs(name) {
+            const p = new URLSearchParams(location.search);
+            return p.get(name) || '';
+        }
+
+        function esc(s) {
+            return String(s)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        async function render() {
+            const url = qs('url');
+            const name = qs('name') || 'Adjunto';
+            const mime = qs('mime');
+
+            const titleEl = document.getElementById('fileTitle');
+            const metaEl = document.getElementById('fileMeta');
+            const viewer = document.getElementById('viewer');
+            const downloadBtn = document.getElementById('downloadBtn');
+
+            if (!url) {
+                viewer.innerHTML = '<p class="text-danger mb-0">Archivo no especificado.</p>';
+                return;
+            }
+
+            titleEl.textContent = name;
+            metaEl.textContent = mime || 'Tipo desconocido';
+            downloadBtn.href = url;
+            downloadBtn.setAttribute('download', name);
+
+            const safeUrl = esc(url);
+            const safeName = esc(name);
+
+            if ((mime || '').startsWith('image/')) {
+                viewer.innerHTML = `<img src="${safeUrl}" alt="${safeName}">`;
+                return;
+            }
+
+            if ((mime || '').startsWith('video/')) {
+                viewer.innerHTML = `<video controls src="${safeUrl}"></video>`;
+                return;
+            }
+
+            if ((mime || '').startsWith('audio/')) {
+                viewer.innerHTML = `<audio controls src="${safeUrl}"></audio>`;
+                return;
+            }
+
+            if ((mime || '').includes('pdf')) {
+                viewer.innerHTML = `<iframe src="${safeUrl}" style="height:72vh;"></iframe>`;
+                return;
+            }
+
+            if ((mime || '').startsWith('text/')) {
+                try {
+                    const res = await fetch(url, { credentials: 'include' });
+                    const text = await res.text();
+                    viewer.innerHTML = `<div class="text-preview">${esc(text)}</div>`;
+                } catch (e) {
+                    viewer.innerHTML = '<p class="text-danger mb-0">No se pudo cargar la vista previa de texto.</p>';
+                }
+                return;
+            }
+
+            viewer.innerHTML = `
+                <p class="mb-1">No hay vista previa para este tipo de archivo.</p>
+                <a class="btn btn-primary btn-sm" href="${safeUrl}" download="${safeName}">Descargar ${safeName}</a>
+            `;
+        }
+
+        render();
+    </script>
+</body>
+</html>

@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8">
+    <script>
+        (function() {
+            const stored = localStorage.getItem('darkMode');
+            const theme = stored === 'dark' || stored === 'light'
+                ? stored
+                : (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+            document.documentElement.dataset.bsTheme = theme;
+            if (theme === 'dark') document.documentElement.classList.add('dark-mode');
+        })();
+    </script>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, shrink-to-fit=no">
+    <title>Chat</title>
+    <link rel="stylesheet" href="assets/bootstrap/css/bootstrap.min.css">
+    <link rel="stylesheet" href="assets/fonts/material-icons.min.css">
+    <link rel="stylesheet" href="assets/css/bss-overrides.css">
+    <link rel="stylesheet" href="assets/css/Fading%20animation.css">
+    <link rel="stylesheet" href="assets/css/styles.css">
+    <style>
+        .chat-shell {
+            height: calc(100vh - 180px);
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 0.75rem;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .chat-list.drag-over {
+            border-color: #0CBD97;
+            background-color: rgba(12, 189, 151, 0.08);
+        }
+        .chat-row {
+            display: flex;
+            margin-bottom: 0.55rem;
+        }
+        .chat-row.mine {
+            justify-content: flex-end;
+        }
+        .chat-bubble {
+            max-width: 78%;
+            border-radius: 14px;
+            padding: 0.55rem 0.75rem;
+            font-size: 0.95rem;
+            line-height: 1.35;
+            background: rgba(12, 189, 151, 0.1);
+            border: 1px solid rgba(12, 189, 151, 0.3);
+        }
+        .chat-row.mine .chat-bubble {
+            background: #0CBD97;
+            color: #10201b;
+            border-color: #0CBD97;
+        }
+        .chat-meta {
+            font-size: 0.75rem;
+            opacity: 0.75;
+            margin-top: 0.25rem;
+        }
+        .tag-terapeuta {
+            color: #ffce2e;
+            font-weight: 700;
+        }
+        .tag-paciente {
+            color: #0CBD97;
+            font-weight: 700;
+        }
+        .chat-typing {
+            min-height: 1.2rem;
+            font-size: 0.85rem;
+            opacity: 0.8;
+            margin-top: 0.25rem;
+        }
+        .chat-attachment {
+            margin-top: 0.4rem;
+            display: inline-block;
+            max-width: 100%;
+        }
+        .chat-attachment img {
+            max-width: 220px;
+            border-radius: 10px;
+            border: 1px solid rgba(255,255,255,0.15);
+        }
+        .chat-drop-hint {
+            font-size: 0.8rem;
+            opacity: 0.75;
+        }
+        [data-bs-theme="dark"] #chatInput {
+            background-color: #1f2329;
+            color: #ffffff;
+            border-color: rgba(255, 255, 255, 0.2);
+        }
+        [data-bs-theme="dark"] #chatInput::placeholder {
+            color: rgba(255, 255, 255, 0.65);
+        }
+        [data-bs-theme="dark"] #chatInput:focus {
+            background-color: #1f2329;
+            color: #ffffff;
+            border-color: #0CBD97;
+        }
+    </style>
+</head>
+
+<body>
+    <section class="mt-3 ms-3 me-3">
+        <div class="d-flex justify-content-between align-items-center mb-2">
+            <h3 class="mb-0">Chat</h3>
+            <a class="btn btn-outline-secondary btn-sm" id="backBtn" href="dashboard-paciente-home.html">Volver</a>
+        </div>
+        <p class="text-muted mb-2" id="chatPeer">Cargando chat...</p>
+
+        <div class="chat-shell mb-2">
+            <div id="chatList" class="chat-list"></div>
+        </div>
+        <div class="chat-drop-hint mb-2">Tip: arrastra y suelta archivos dentro del chat para adjuntarlos.</div>
+
+        <div id="typingIndicator" class="chat-typing text-muted"></div>
+
+        <div class="input-group mb-4">
+            <input id="chatFileInput" type="file" class="d-none" accept="image/*,.pdf,.doc,.docx,.txt,.zip,.rar,.7z">
+            <button id="attachBtn" class="btn btn-outline-secondary" type="button">
+                <span class="material-icons" style="font-size:18px;vertical-align:middle;">attach_file</span>
+            </button>
+            <input id="chatInput" type="text" class="form-control" placeholder="Escribe un mensaje..." maxlength="1000">
+            <button id="sendBtn" class="btn btn-primary" type="button">Enviar</button>
+        </div>
+    </section>
+
+    <script src="assets/bootstrap/js/bootstrap.min.js"></script>
+    <script src="assets/js/click%20button%20delay.js"></script>
+    <script src="assets/js/dark-mode.js"></script>
+    <script src="assets/js/notifications.js"></script>
+    <script>
+        const CHAT_BASE_TITLE = document.title || 'Chat';
+        let chatContext = null;
+        let currentUserId = null;
+        let currentPacienteId = null;
+        let lastMessageId = 0;
+        let pendingTitleUnread = 0;
+        let typingTimer = null;
+        let pollingTimer = null;
+        let isSendingMessage = false;
+        let chatTitleFlashTimer = null;
+
+        function applyChatTitle() {
+            document.title = pendingTitleUnread > 0 ? `(${pendingTitleUnread}) ${CHAT_BASE_TITLE}` : CHAT_BASE_TITLE;
+        }
+
+        function flashChatNewMessageTitle() {
+            if (document.visibilityState === 'visible') {
+                applyChatTitle();
+                return;
+            }
+            if (chatTitleFlashTimer) clearTimeout(chatTitleFlashTimer);
+            const shown = Math.max(1, pendingTitleUnread);
+            document.title = `(${shown}) ¡Nuevo mensaje!`;
+            chatTitleFlashTimer = setTimeout(() => {
+                applyChatTitle();
+            }, 1800);
+        }
+
+        function buildQueryPacienteId() {
+            const params = new URLSearchParams(window.location.search);
+            const pacienteId = params.get('paciente_id');
+            return pacienteId ? `?paciente_id=${encodeURIComponent(pacienteId)}` : '';
+        }
+
+        function escapeHtml(str) {
+            return String(str)
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#039;');
+        }
+
+        function stripRoleTags(name) {
+            return String(name || '')
+                .replace(/^\s*\[(TERAPEUTA|PACIENTE)\]\s*/i, '')
+                .trim();
+        }
+
+        async function fetchContext() {
+            const res = await fetch(`/chat/context${buildQueryPacienteId()}`, { credentials: 'include' });
+            if (!res.ok) throw new Error('No se pudo cargar contexto del chat');
+            chatContext = await res.json();
+            currentPacienteId = chatContext.paciente_id;
+            currentUserId = chatContext.me && chatContext.me.id;
+
+            const rawPeerName = (chatContext.peer && (chatContext.peer.display_name || ((chatContext.peer.nombre || '') + ' ' + (chatContext.peer.apellidos || '')).trim()))
+                || (chatContext.peer && chatContext.peer.correo)
+                || 'Contacto';
+            const isTherapistView = chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin');
+            const safePeerName = escapeHtml(rawPeerName);
+            const peerEl = document.getElementById('chatPeer');
+            if (chatContext.peer && chatContext.peer.rol === 'terapeuta') {
+                peerEl.innerHTML = `Conversacion con <span class="tag-terapeuta">[TERAPEUTA]</span> ${safePeerName}`;
+            } else if (isTherapistView && chatContext.peer && chatContext.peer.rol === 'paciente') {
+                peerEl.innerHTML = `Conversacion con <span class="tag-paciente">[PACIENTE]</span> ${safePeerName}`;
+            } else {
+                peerEl.textContent = `Conversacion con ${rawPeerName}`;
+            }
+
+            const backBtn = document.getElementById('backBtn');
+            if (chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin')) {
+                backBtn.href = 'dashboard-terapeuta-patients.html';
+            }
+        }
+
+        async function fetchMessages(scrollIfNew = false) {
+            if (!currentPacienteId) return;
+            const query = `?paciente_id=${encodeURIComponent(currentPacienteId)}`;
+            const res = await fetch(`/chat/messages${query}`, { credentials: 'include' });
+            if (!res.ok) throw new Error('No se pudieron cargar mensajes');
+            const data = await res.json();
+            const typingEl = document.getElementById('typingIndicator');
+            if (typingEl) {
+                if (data.peer_typing) {
+                    const name = data.peer_name || 'La otra persona';
+                    typingEl.textContent = `${name} está escribiendo...`;
+                } else {
+                    typingEl.textContent = '';
+                }
+            }
+
+            const list = document.getElementById('chatList');
+            const prevBottomDistance = list.scrollHeight - list.scrollTop - list.clientHeight;
+            const wasNearBottom = prevBottomDistance < 80;
+
+            const items = data.messages || [];
+            let html = '';
+            let newLastId = 0;
+            let incomingNewCount = 0;
+
+            for (const m of items) {
+                const isMine = Number(m.sender_user_id) === Number(currentUserId);
+                const rowClass = isMine ? 'chat-row mine' : 'chat-row';
+                const safeMsg = escapeHtml(m.mensaje || '');
+                const isTherapistView = chatContext && chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin');
+                const senderLabel = stripRoleTags(m.sender_nombre || 'Usuario');
+                const safeName = escapeHtml(senderLabel);
+                const safeDate = escapeHtml(m.fecha || '');
+                let tagHtml = '';
+                if (m.sender_rol === 'terapeuta' || m.sender_rol === 'admin') {
+                    tagHtml = '<span class="tag-terapeuta">[TERAPEUTA]</span> ';
+                } else if (isTherapistView && m.sender_rol === 'paciente') {
+                    tagHtml = '<span class="tag-paciente">[PACIENTE]</span> ';
+                }
+                let attachmentHtml = '';
+                if (m.attachment_url) {
+                    const safeUrl = escapeHtml(m.attachment_url);
+                    const safeFileName = escapeHtml(m.attachment_name || 'Adjunto');
+                    const mime = String(m.attachment_mime || '');
+                    const viewerUrl = `chat-file-viewer.html?url=${encodeURIComponent(m.attachment_url)}&name=${encodeURIComponent(m.attachment_name || 'Adjunto')}&mime=${encodeURIComponent(m.attachment_mime || '')}`;
+                    const safeViewerUrl = escapeHtml(viewerUrl);
+                    if (mime.startsWith('image/')) {
+                        attachmentHtml = `<a class="chat-attachment" href="${safeViewerUrl}"><img src="${safeUrl}" alt="${safeFileName}"></a>`;
+                    } else {
+                        attachmentHtml = `<a class="chat-attachment" href="${safeViewerUrl}">📎 ${safeFileName}</a>`;
+                    }
+                }
+                html += `
+                    <div class="${rowClass}">
+                        <div class="chat-bubble">
+                            ${safeMsg ? `<div>${safeMsg}</div>` : ''}
+                            ${attachmentHtml}
+                            <div class="chat-meta">${tagHtml}${safeName} · ${safeDate}</div>
+                        </div>
+                    </div>
+                `;
+                if (m.id > newLastId) newLastId = m.id;
+                if (m.id > lastMessageId && Number(m.sender_user_id) !== Number(currentUserId)) {
+                    incomingNewCount += 1;
+                }
+            }
+
+            list.innerHTML = html || '<p class="text-muted mb-0">No hay mensajes todavia.</p>';
+
+            const hasNewMessages = newLastId > lastMessageId;
+            lastMessageId = Math.max(lastMessageId, newLastId);
+            if (scrollIfNew || wasNearBottom || hasNewMessages) {
+                list.scrollTop = list.scrollHeight;
+            }
+
+            if (incomingNewCount > 0 && document.visibilityState !== 'visible') {
+                pendingTitleUnread += incomingNewCount;
+                flashChatNewMessageTitle();
+            }
+        }
+
+        async function sendMessage() {
+            if (isSendingMessage) return;
+            const input = document.getElementById('chatInput');
+            const btn = document.getElementById('sendBtn');
+            const originalText = input.value || '';
+            const mensaje = originalText.trim();
+            if (!mensaje) return;
+
+            isSendingMessage = true;
+            input.value = '';
+            input.disabled = true;
+            btn.disabled = true;
+            try {
+                const payload = { mensaje };
+                if (chatContext && chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin')) {
+                    payload.paciente_id = currentPacienteId;
+                }
+
+                const res = await fetch('/chat/messages', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                let body = {};
+                try { body = await res.json(); } catch (e) {}
+                if (!res.ok) {
+                    throw new Error(body.error || body.mensaje || 'No se pudo enviar el mensaje');
+                }
+
+                await notifyTyping(false);
+                await fetchMessages(true);
+            } catch (e) {
+                if (!input.value) {
+                    input.value = originalText;
+                }
+                alert(e.message || 'Error enviando mensaje');
+            } finally {
+                btn.disabled = false;
+                input.disabled = false;
+                input.focus();
+                isSendingMessage = false;
+            }
+        }
+
+        async function uploadAttachment(file) {
+            if (!file) return;
+            const formData = new FormData();
+            formData.append('file', file);
+            if (chatContext && chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin')) {
+                formData.append('paciente_id', String(currentPacienteId));
+            }
+
+            const resUpload = await fetch('/chat/upload', {
+                method: 'POST',
+                credentials: 'include',
+                body: formData
+            });
+
+            let uploadBody = {};
+            try { uploadBody = await resUpload.json(); } catch (e) {}
+            if (!resUpload.ok) {
+                throw new Error(uploadBody.error || uploadBody.mensaje || 'No se pudo subir archivo');
+            }
+
+            const payload = {
+                mensaje: '',
+                attachment_url: uploadBody.attachment_url,
+                attachment_name: uploadBody.attachment_name,
+                attachment_mime: uploadBody.attachment_mime
+            };
+            if (chatContext && chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin')) {
+                payload.paciente_id = currentPacienteId;
+            }
+
+            const resSend = await fetch('/chat/messages', {
+                method: 'POST',
+                credentials: 'include',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            let sendBody = {};
+            try { sendBody = await resSend.json(); } catch (e) {}
+            if (!resSend.ok) {
+                throw new Error(sendBody.error || sendBody.mensaje || 'No se pudo enviar adjunto');
+            }
+            await fetchMessages(true);
+        }
+
+        function bindDragAndDrop() {
+            const list = document.getElementById('chatList');
+            if (!list) return;
+
+            const prevent = (ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+            };
+
+            ['dragenter', 'dragover'].forEach((eventName) => {
+                list.addEventListener(eventName, (ev) => {
+                    prevent(ev);
+                    list.classList.add('drag-over');
+                });
+            });
+
+            ['dragleave', 'dragend', 'drop'].forEach((eventName) => {
+                list.addEventListener(eventName, (ev) => {
+                    prevent(ev);
+                    list.classList.remove('drag-over');
+                });
+            });
+
+            list.addEventListener('drop', async (ev) => {
+                const dt = ev.dataTransfer;
+                if (!dt || !dt.files || !dt.files.length) return;
+                const file = dt.files[0];
+                try {
+                    await uploadAttachment(file);
+                } catch (e) {
+                    alert(e.message || 'No se pudo adjuntar archivo');
+                }
+            });
+        }
+
+        async function notifyTyping(isTyping) {
+            if (!currentPacienteId) return;
+            const payload = { is_typing: !!isTyping };
+            if (chatContext && chatContext.me && (chatContext.me.rol === 'terapeuta' || chatContext.me.rol === 'admin')) {
+                payload.paciente_id = currentPacienteId;
+            }
+            try {
+                await fetch('/chat/typing', {
+                    method: 'POST',
+                    credentials: 'include',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+            } catch (e) {}
+        }
+
+        async function bootChat() {
+            try {
+                await fetchContext();
+                await fetchMessages(true);
+
+                const input = document.getElementById('chatInput');
+                const btn = document.getElementById('sendBtn');
+                const attachBtn = document.getElementById('attachBtn');
+                const fileInput = document.getElementById('chatFileInput');
+
+                btn.addEventListener('click', sendMessage);
+                attachBtn.addEventListener('click', () => fileInput.click());
+                fileInput.addEventListener('change', async () => {
+                    if (!fileInput.files || !fileInput.files[0]) return;
+                    const f = fileInput.files[0];
+                    fileInput.value = '';
+                    try {
+                        await uploadAttachment(f);
+                    } catch (e) {
+                        alert(e.message || 'No se pudo enviar adjunto');
+                    }
+                });
+
+                input.addEventListener('keydown', (ev) => {
+                    if (ev.key === 'Enter') {
+                        ev.preventDefault();
+                        sendMessage();
+                    }
+                });
+
+                input.addEventListener('input', () => {
+                    notifyTyping(true);
+                    if (typingTimer) clearTimeout(typingTimer);
+                    typingTimer = setTimeout(() => notifyTyping(false), 1800);
+                });
+
+                pollingTimer = setInterval(() => {
+                    fetchMessages(false).catch(() => {});
+                }, 700);
+
+                bindDragAndDrop();
+            } catch (e) {
+                console.error('Error loading chat:', e);
+                alert('No se pudo abrir el chat. Inicia sesion de nuevo.');
+                window.location.href = 'index-sign_in.html';
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            if (pollingTimer) clearInterval(pollingTimer);
+            notifyTyping(false);
+        });
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible') {
+                if (chatTitleFlashTimer) {
+                    clearTimeout(chatTitleFlashTimer);
+                    chatTitleFlashTimer = null;
+                }
+                pendingTitleUnread = 0;
+                applyChatTitle();
+            }
+        });
+
+        bootChat();
+    </script>
+</body>
+
+</html>

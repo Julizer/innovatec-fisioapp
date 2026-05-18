@@ -4,14 +4,18 @@ import sqlite3
 import random
 import string
 import bcrypt
+import mimetypes
+import logging
 from flask_cors import CORS
 from pywebpush import webpush, WebPushException
 import datetime
 import json
 import threading
 import time
+from uuid import uuid4
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from cryptography.hazmat.primitives.asymmetric import ec
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -29,10 +33,24 @@ IS_PRODUCTION = os.getenv("FLASK_ENV") == "production"
 app.config["SESSION_COOKIE_SAMESITE"] = "None" if IS_PRODUCTION else "Lax"
 app.config["SESSION_COOKIE_SECURE"] = IS_PRODUCTION
 
-VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "eFaUctaZhCHWiKuZXZ5hgh8G482uvKQLY_PCyCFdubgSuj1pQGDwQgx4jJxEgve_8O8eklSKij5xoQytYZjHHg")
-VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "3vfnp_SJW87mtAqeTK7YMT1S5VPGuArrDk7UONC9xbQ")
+VAPID_PUBLIC_KEY = os.getenv("VAPID_PUBLIC_KEY", "BInpwmVC5Xfb9_hWESi_O15d9CorQaVrQN-_QncpE9NNowZczH9SYGryI-3-B3YJbdZJNGh9i0C1g2k-ss58Rkw")
+VAPID_PRIVATE_KEY = os.getenv("VAPID_PRIVATE_KEY", "yJco_xQqUqIklkhq8krWC2DM9v8NGXtGDsMG8JVxdy4")
 VAPID_CLAIMS = {"sub": "mailto:admin@innovatec.com"}
 AUTO_NOTIFICATION_HOURS = [9, 14, 19]
+CHAT_UPLOAD_DIR = os.path.join(FRONTEND_DIR, "assets", "uploads", "chat")
+TYPING_TTL_SECONDS = 6
+typing_state = {}
+
+
+class SuppressChatPollFilter(logging.Filter):
+    def filter(self, record):
+        msg = record.getMessage()
+        if 'GET /chat/messages' in msg or 'GET /chat/typing' in msg or 'GET /chat/unread_count' in msg:
+            return False
+        return True
+
+
+logging.getLogger("werkzeug").addFilter(SuppressChatPollFilter())
 
 
 def initialize_database():
@@ -56,6 +74,7 @@ def initialize_database():
 
         CREATE TABLE IF NOT EXISTS pacientes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
+            usuario_id INTEGER,
             nombre TEXT NOT NULL,
             apellidos TEXT NOT NULL,
             fecha_nacimiento DATE,
@@ -64,6 +83,7 @@ def initialize_database():
             correo TEXT,
             terapeuta_id INTEGER,
             fecha_registro DATE DEFAULT CURRENT_DATE,
+            FOREIGN KEY (usuario_id) REFERENCES usuarios(id),
             FOREIGN KEY (terapeuta_id) REFERENCES usuarios(id)
         );
 
@@ -104,6 +124,36 @@ def initialize_database():
             created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
         );
+
+        CREATE TABLE IF NOT EXISTS chat_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            paciente_id INTEGER NOT NULL,
+            sender_user_id INTEGER NOT NULL,
+            mensaje TEXT NOT NULL,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (paciente_id) REFERENCES pacientes(id),
+            FOREIGN KEY (sender_user_id) REFERENCES usuarios(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS chat_reads (
+            user_id INTEGER NOT NULL,
+            paciente_id INTEGER NOT NULL,
+            last_read_message_id INTEGER NOT NULL DEFAULT 0,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (user_id, paciente_id),
+            FOREIGN KEY (user_id) REFERENCES usuarios(id),
+            FOREIGN KEY (paciente_id) REFERENCES pacientes(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS push_subscriptions_users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER NOT NULL,
+            endpoint TEXT UNIQUE NOT NULL,
+            p256dh TEXT NOT NULL,
+            auth TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES usuarios(id)
+        );
         """
     )
 
@@ -122,6 +172,23 @@ def initialize_database():
     columnas = [col[1] for col in cursor.fetchall()]
     if "terapeuta_id" not in columnas:
         cursor.execute("ALTER TABLE pacientes ADD COLUMN terapeuta_id INTEGER")
+    if "usuario_id" not in columnas:
+        cursor.execute("ALTER TABLE pacientes ADD COLUMN usuario_id INTEGER")
+
+    # Backfill usuario_id in pacientes from matching correo when available.
+    cursor.execute(
+        """
+        UPDATE pacientes
+        SET usuario_id = (
+            SELECT u.id
+            FROM usuarios u
+            WHERE lower(trim(u.correo)) = lower(trim(pacientes.correo))
+            ORDER BY u.id DESC
+            LIMIT 1
+        )
+        WHERE usuario_id IS NULL OR usuario_id = 0
+        """
+    )
 
     # Asegura compatibilidad con bases antiguas sin tipo en notificaciones.
     cursor.execute("PRAGMA table_info(notificaciones)")
@@ -167,6 +234,19 @@ def initialize_database():
     if 'codigo' not in cols:
         cursor.execute("ALTER TABLE usuarios ADD COLUMN codigo TEXT")
     cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_usuarios_codigo ON usuarios(codigo)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_messages_paciente_fecha ON chat_messages(paciente_id, fecha)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_chat_reads_user ON chat_reads(user_id, paciente_id)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_push_users_user ON push_subscriptions_users(user_id)")
+
+    # Chat attachment compatibility for existing databases.
+    cursor.execute("PRAGMA table_info(chat_messages)")
+    chat_cols = [col[1] for col in cursor.fetchall()]
+    if "attachment_url" not in chat_cols:
+        cursor.execute("ALTER TABLE chat_messages ADD COLUMN attachment_url TEXT")
+    if "attachment_name" not in chat_cols:
+        cursor.execute("ALTER TABLE chat_messages ADD COLUMN attachment_name TEXT")
+    if "attachment_mime" not in chat_cols:
+        cursor.execute("ALTER TABLE chat_messages ADD COLUMN attachment_mime TEXT")
 
     # Backfill codes for terapeutas missing one
     cursor.execute("SELECT id FROM usuarios WHERE rol='terapeuta' AND (codigo IS NULL OR codigo='')")
@@ -188,7 +268,6 @@ def initialize_database():
 
 @app.route("/me", methods=["GET"])
 def me():
-    print("SESSION EN /me:", dict(session))
     if "user_id" not in session:
         return {"error": "No autenticado"}, 401
     conn = conectar()
@@ -218,9 +297,6 @@ def push_subscribe():
     if "user_id" not in session:
         return {"error": "No autenticado"}, 401
 
-    if session.get("rol") != "paciente":
-        return {"error": "Solo para pacientes"}, 403
-
     data = request.get_json() or {}
     subscription = data.get("subscription") or data
     endpoint = subscription.get("endpoint")
@@ -233,32 +309,39 @@ def push_subscribe():
 
     conn = conectar()
     cursor = conn.cursor()
+
+    # Canonical subscriptions for any authenticated role.
     cursor.execute(
-        "SELECT id FROM pacientes WHERE correo = (SELECT correo FROM usuarios WHERE id = ?)",
+        "INSERT OR REPLACE INTO push_subscriptions_users (endpoint, p256dh, auth, user_id) VALUES (?, ?, ?, ?)",
+        (endpoint, p256dh, auth, session["user_id"])
+    )
+
+    paciente_id = None
+    if session.get("rol") == "paciente":
+        paciente_id = get_paciente_id_from_user(cursor, session["user_id"])
+        if paciente_id:
+            # Legacy table kept for backward compatibility.
+            cursor.execute(
+                "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, paciente_id) VALUES (?, ?, ?, ?)",
+                (endpoint, p256dh, auth, paciente_id)
+            )
+
+    cursor.execute(
+        "SELECT rol FROM usuarios WHERE id = ?",
         (session["user_id"],)
     )
-    paciente_row = cursor.fetchone()
-    if not paciente_row:
-        conn.close()
-        return {"error": "Paciente no encontrado"}, 404
+    role_row = cursor.fetchone()
+    user_role = role_row[0] if role_row else session.get("rol")
 
-    paciente_id = paciente_row[0]
-    cursor.execute(
-        "INSERT OR REPLACE INTO push_subscriptions (endpoint, p256dh, auth, paciente_id) VALUES (?, ?, ?, ?)",
-        (endpoint, p256dh, auth, paciente_id)
-    )
     conn.commit()
     conn.close()
 
-    return {"mensaje": "Suscripción push guardada"}
+    return {"mensaje": "Suscripción push guardada", "paciente_id": paciente_id, "rol": user_role}
 
 @app.route("/push/unsubscribe", methods=["POST"])
 def push_unsubscribe():
     if "user_id" not in session:
         return {"error": "No autenticado"}, 401
-
-    if session.get("rol") != "paciente":
-        return {"error": "Solo para pacientes"}, 403
 
     data = request.get_json() or {}
     endpoint = data.get("endpoint")
@@ -268,30 +351,16 @@ def push_unsubscribe():
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+    cursor.execute("DELETE FROM push_subscriptions_users WHERE endpoint = ?", (endpoint,))
     conn.commit()
     conn.close()
 
     return {"mensaje": "Suscripción push eliminada"}
 
 
-def enviar_push(paciente_id, titulo, mensaje):
-    conn = conectar()
-    cursor = conn.cursor()
-    cursor.execute(
-        "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE paciente_id = ?",
-        (paciente_id,)
-    )
-    suscripciones = cursor.fetchall()
-    conn.close()
-
-    payload = json.dumps({
-        "title": titulo,
-        "body": mensaje,
-        "icon": "/assets/img/favicon.png" if os.path.exists(os.path.join(FRONTEND_DIR, "assets/img/favicon.png")) else None,
-        "url": "/dashboard-paciente-home.html"
-    })
-
-    for endpoint, p256dh, auth in suscripciones:
+def send_push_rows(rows, payload):
+    endpoints_to_remove = []
+    for endpoint, p256dh, auth in rows:
         try:
             webpush(
                 subscription_info={
@@ -301,18 +370,98 @@ def enviar_push(paciente_id, titulo, mensaje):
                         "auth": auth
                     }
                 },
-                data=payload,
+                data=json.dumps(payload),
                 vapid_private_key=VAPID_PRIVATE_KEY,
-                vapid_claims=VAPID_CLAIMS
+                vapid_claims=VAPID_CLAIMS,
+                timeout=4
             )
         except WebPushException as exc:
-            print("WebPush error:", exc)
-            if exc.response and exc.response.status_code in [404, 410]:
-                conn = conectar()
-                c = conn.cursor()
-                c.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
-                conn.commit()
-                conn.close()
+            status_code = exc.response.status_code if exc.response else None
+            exc_text = str(exc)
+            should_remove = (
+                status_code in [401, 403, 404, 410]
+                or '401' in exc_text
+                or '403' in exc_text
+                or '404' in exc_text
+                or '410' in exc_text
+            )
+            if should_remove:
+                endpoints_to_remove.append(endpoint)
+                continue
+            app.logger.warning("WebPush error (%s): %s", status_code if status_code is not None else "unknown", exc)
+
+    if endpoints_to_remove:
+        conn = conectar()
+        c = conn.cursor()
+        for endpoint in set(endpoints_to_remove):
+            c.execute("DELETE FROM push_subscriptions WHERE endpoint = ?", (endpoint,))
+            c.execute("DELETE FROM push_subscriptions_users WHERE endpoint = ?", (endpoint,))
+        conn.commit()
+        conn.close()
+
+
+def enviar_push_a_usuario(user_id, titulo, mensaje, url="/dashboard-paciente-home.html"):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions_users WHERE user_id = ?",
+        (user_id,)
+    )
+    suscripciones = cursor.fetchall()
+    conn.close()
+
+    payload = json.dumps({
+        "title": titulo,
+        "body": mensaje,
+        "icon": "/assets/img/favicon.png" if os.path.exists(os.path.join(FRONTEND_DIR, "assets/img/favicon.png")) else None,
+        "url": url
+    })
+
+    if suscripciones:
+        send_push_rows(suscripciones, json.loads(payload))
+
+
+def enviar_push(paciente_id, titulo, mensaje, url="/dashboard-paciente-home.html"):
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT u.id
+        FROM usuarios u
+        JOIN pacientes p ON lower(trim(p.correo)) = lower(trim(u.correo))
+        WHERE p.id = ?
+        ORDER BY u.id DESC
+        LIMIT 1
+        """,
+        (paciente_id,)
+    )
+    user_row = cursor.fetchone()
+
+    # Fallback to legacy patient-scoped subscriptions if needed.
+    cursor.execute(
+        "SELECT endpoint, p256dh, auth FROM push_subscriptions WHERE paciente_id = ?",
+        (paciente_id,)
+    )
+    legacy_rows = cursor.fetchall()
+    conn.close()
+
+    if user_row:
+        enviar_push_a_usuario(user_row[0], titulo, mensaje, url=url)
+        return
+
+    payload = {
+        "title": titulo,
+        "body": mensaje,
+        "icon": "/assets/img/favicon.png" if os.path.exists(os.path.join(FRONTEND_DIR, "assets/img/favicon.png")) else None,
+        "url": url
+    }
+    if legacy_rows:
+        send_push_rows(legacy_rows, payload)
+
+
+def dispatch_push_async(func, *args, **kwargs):
+    worker = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
+    worker.start()
 
 
 def obtener_pacientes_sin_encuesta_hoy():
@@ -429,7 +578,6 @@ def login():
     cursor.execute("SELECT id, correo, rol, password, codigo FROM usuarios WHERE correo=?", (correo,))
     row = cursor.fetchone()
     conn.close()
-    print("LOGIN USER ROW:", row)
 
     if not row:
         return {"mensaje": "Credenciales incorrectas"}, 401
@@ -550,8 +698,8 @@ def register():
 
             # create a pacientes record linked to this therapist
             cursor.execute(
-                "INSERT INTO pacientes (nombre, apellidos, fecha_nacimiento, sexo, telefono, correo, terapeuta_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (nombre or "", apellidos or "", fecha_nacimiento, sexo, telefono or "", correo, terapeuta_id)
+                "INSERT INTO pacientes (usuario_id, nombre, apellidos, fecha_nacimiento, sexo, telefono, correo, terapeuta_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (user_id, nombre or "", apellidos or "", fecha_nacimiento, sexo, telefono or "", correo, terapeuta_id)
             )
             conn.commit()
     except sqlite3.IntegrityError:
@@ -652,8 +800,6 @@ def obtener_usuarios():
 @app.route("/pacientes", methods=["GET"])
 def obtener_pacientes():
 
-    print("SESSION:", dict(session))
-    
     if "user_id" not in session:
         return {"error": "No autorizado"}, 401
 
@@ -745,6 +891,506 @@ def notificar_paciente(paciente_id):
     enviar_push(paciente_id, "Recordatorio de encuesta diaria", mensaje)
 
     return {"mensaje": "Recordatorio enviado."}
+
+
+def get_paciente_id_from_user(cursor, user_id):
+    cursor.execute(
+        """
+        SELECT p.id
+        FROM pacientes p
+        WHERE p.usuario_id = ?
+        ORDER BY p.id DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    if row:
+        return row[0]
+
+    # Legacy fallback for older rows before usuario_id was filled.
+    cursor.execute(
+        """
+        SELECT p.id
+        FROM pacientes p
+        JOIN usuarios u ON lower(trim(u.correo)) = lower(trim(p.correo))
+        WHERE u.id = ?
+        ORDER BY p.id DESC
+        LIMIT 1
+        """,
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def resolve_chat_paciente_id(cursor, requested_paciente_id=None):
+    if "user_id" not in session:
+        return None, ({"error": "No autorizado"}, 401)
+
+    rol = session.get("rol")
+    if rol == "paciente":
+        own_paciente_id = get_paciente_id_from_user(cursor, session["user_id"])
+        if not own_paciente_id:
+            return None, ({"error": "Paciente no encontrado"}, 404)
+        if requested_paciente_id and requested_paciente_id != own_paciente_id:
+            return None, ({"error": "Acceso prohibido"}, 403)
+        return own_paciente_id, None
+
+    if rol in ["terapeuta", "admin"]:
+        if not requested_paciente_id:
+            return None, ({"error": "paciente_id es requerido"}, 400)
+
+        cursor.execute("SELECT terapeuta_id FROM pacientes WHERE id = ?", (requested_paciente_id,))
+        row = cursor.fetchone()
+        if not row:
+            return None, ({"error": "Paciente no encontrado"}, 404)
+
+        if rol == "terapeuta" and row[0] != session["user_id"]:
+            return None, ({"error": "No puedes acceder al chat de este paciente"}, 403)
+
+        return requested_paciente_id, None
+
+    return None, ({"error": "Acceso prohibido"}, 403)
+
+
+def get_terapeuta_id_from_paciente(cursor, paciente_id):
+    cursor.execute("SELECT terapeuta_id FROM pacientes WHERE id = ?", (paciente_id,))
+    row = cursor.fetchone()
+    return row[0] if row else None
+
+
+def upsert_chat_read(cursor, user_id, paciente_id, last_message_id):
+    cursor.execute(
+        """
+        INSERT INTO chat_reads (user_id, paciente_id, last_read_message_id, updated_at)
+        VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+        ON CONFLICT(user_id, paciente_id) DO UPDATE SET
+            last_read_message_id = excluded.last_read_message_id,
+            updated_at = CURRENT_TIMESTAMP
+        """,
+        (user_id, paciente_id, last_message_id)
+    )
+
+
+def get_unread_count_for_user(cursor, user_id, paciente_ids):
+    if not paciente_ids:
+        return {}, 0
+
+    placeholders = ",".join(["?"] * len(paciente_ids))
+    params = [user_id] + paciente_ids + [user_id]
+    cursor.execute(
+        f"""
+        SELECT m.paciente_id, COUNT(*)
+        FROM chat_messages m
+        LEFT JOIN chat_reads r ON r.user_id = ? AND r.paciente_id = m.paciente_id
+        WHERE m.paciente_id IN ({placeholders})
+          AND m.sender_user_id != ?
+          AND m.id > COALESCE(r.last_read_message_id, 0)
+        GROUP BY m.paciente_id
+        """,
+        params
+    )
+    rows = cursor.fetchall()
+    by_paciente = {int(r[0]): int(r[1]) for r in rows}
+    total = sum(by_paciente.values())
+    return by_paciente, total
+
+
+def get_latest_unread_preview_for_user(cursor, user_id, paciente_ids):
+    if not paciente_ids:
+        return None
+
+    placeholders = ",".join(["?"] * len(paciente_ids))
+    params = [user_id] + paciente_ids + [user_id]
+    cursor.execute(
+        f"""
+        SELECT m.paciente_id, m.mensaje, m.attachment_name, p.nombre, p.apellidos, p.correo
+        FROM chat_messages m
+        JOIN pacientes p ON p.id = m.paciente_id
+        LEFT JOIN chat_reads r ON r.user_id = ? AND r.paciente_id = m.paciente_id
+        WHERE m.paciente_id IN ({placeholders})
+          AND m.sender_user_id != ?
+          AND m.id > COALESCE(r.last_read_message_id, 0)
+        ORDER BY m.id DESC
+        LIMIT 1
+        """,
+        params
+    )
+    row = cursor.fetchone()
+    if not row:
+        return None
+
+    paciente_id = int(row[0])
+    mensaje = (row[1] or "").strip()
+    attachment_name = (row[2] or "").strip()
+    sender_name = ((row[3] or "") + " " + (row[4] or "")).strip() or (row[5] or f"Paciente {paciente_id}")
+
+    if mensaje:
+        preview = mensaje
+    elif attachment_name:
+        preview = f"Adjunto: {attachment_name}"
+    else:
+        preview = "Nuevo mensaje"
+
+    preview = preview if len(preview) <= 120 else (preview[:117] + "...")
+    return {
+        "paciente_id": paciente_id,
+        "sender_name": sender_name,
+        "preview": preview
+    }
+
+
+def get_peer_typing_state(cursor, paciente_id, current_user_id):
+        now = time.time()
+        expired = [k for k, exp in typing_state.items() if exp < now]
+        for k in expired:
+                typing_state.pop(k, None)
+
+        cursor.execute(
+                """
+                SELECT id, nombre, apellidos, correo
+                FROM usuarios
+                WHERE id != ?
+                    AND (
+                        id = (SELECT terapeuta_id FROM pacientes WHERE id = ?)
+                        OR id = (SELECT usuario_id FROM pacientes WHERE id = ?)
+                    )
+                LIMIT 5
+                """,
+                (current_user_id, paciente_id, paciente_id)
+        )
+        peers = cursor.fetchall()
+
+        for peer in peers:
+                peer_id = peer[0]
+                if typing_state.get((paciente_id, peer_id), 0) >= now:
+                        peer_name = ((peer[1] or "") + " " + (peer[2] or "")).strip() or (peer[3] or "Usuario")
+                        return True, peer_name
+
+        return False, None
+
+
+@app.route("/chat/context", methods=["GET"])
+def chat_context():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    requested_paciente_id = request.args.get("paciente_id", type=int)
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    if error:
+        conn.close()
+        body, code = error
+        return body, code
+
+    cursor.execute("SELECT usuario_id, nombre, apellidos, correo, terapeuta_id FROM pacientes WHERE id = ?", (paciente_id,))
+    p = cursor.fetchone()
+    if not p:
+        conn.close()
+        return {"error": "Paciente no encontrado"}, 404
+
+    p_usuario_id, p_nombre, p_apellidos, p_correo, terapeuta_id = p
+
+    cursor.execute("SELECT id, correo, nombre, apellidos FROM usuarios WHERE id = ?", (session["user_id"],))
+    me = cursor.fetchone()
+    me_data = {
+        "id": me[0],
+        "correo": me[1],
+        "nombre": me[2],
+        "apellidos": me[3],
+        "rol": session.get("rol")
+    } if me else None
+
+    if session.get("rol") == "paciente":
+        cursor.execute("SELECT id, correo, nombre, apellidos FROM usuarios WHERE id = ?", (terapeuta_id,))
+        peer = cursor.fetchone()
+        peer_data = {
+            "id": peer[0],
+            "correo": peer[1],
+            "nombre": peer[2],
+            "apellidos": peer[3],
+            "rol": "terapeuta"
+        } if peer else None
+    else:
+        patient_display_name = ((p_nombre or "") + " " + (p_apellidos or "")).strip() or f"Paciente {paciente_id}"
+        peer_data = {
+            "id": p_usuario_id,
+            "correo": p_correo,
+            "nombre": p_nombre,
+            "apellidos": p_apellidos,
+            "display_name": patient_display_name,
+            "rol": "paciente"
+        }
+
+    conn.close()
+    return {
+        "paciente_id": paciente_id,
+        "me": me_data,
+        "peer": peer_data
+    }
+
+
+@app.route("/chat/messages", methods=["GET"])
+def chat_messages_get():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    requested_paciente_id = request.args.get("paciente_id", type=int)
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    if error:
+        conn.close()
+        body, code = error
+        return body, code
+
+    cursor.execute(
+        """
+                 SELECT m.id, m.sender_user_id, m.mensaje, m.fecha,
+                         m.attachment_url, m.attachment_name, m.attachment_mime,
+                             u.rol, u.nombre, u.apellidos, u.correo,
+                             p.nombre, p.apellidos
+        FROM chat_messages m
+        JOIN usuarios u ON u.id = m.sender_user_id
+                LEFT JOIN pacientes p ON p.id = m.paciente_id
+        WHERE m.paciente_id = ?
+        ORDER BY m.id ASC
+        LIMIT 500
+        """,
+        (paciente_id,)
+    )
+    rows = cursor.fetchall()
+
+    data = []
+    max_message_id = 0
+    for r in rows:
+        sender_rol = r[7]
+        if sender_rol in ["terapeuta", "admin"]:
+            therapist_name = ((r[8] or "") + " " + (r[9] or "")).strip() or (r[10] or "Terapeuta")
+            display_name = f"[TERAPEUTA] {therapist_name}"
+        else:
+            patient_name = ((r[11] or "") + " " + (r[12] or "")).strip()
+            display_name = patient_name or f"Paciente {paciente_id}"
+
+        data.append({
+            "id": r[0],
+            "sender_user_id": r[1],
+            "mensaje": r[2],
+            "fecha": r[3],
+            "attachment_url": r[4],
+            "attachment_name": r[5],
+            "attachment_mime": r[6],
+            "sender_rol": sender_rol,
+            "sender_nombre": display_name
+        })
+        if r[0] > max_message_id:
+            max_message_id = r[0]
+
+    if max_message_id > 0:
+        upsert_chat_read(cursor, session["user_id"], paciente_id, max_message_id)
+        conn.commit()
+
+    peer_typing, peer_name = get_peer_typing_state(cursor, paciente_id, session["user_id"])
+    conn.close()
+
+    return {
+        "paciente_id": paciente_id,
+        "messages": data,
+        "last_read_message_id": max_message_id,
+        "peer_typing": peer_typing,
+        "peer_name": peer_name
+    }
+
+
+@app.route("/chat/messages", methods=["POST"])
+def chat_messages_post():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    data = request.get_json() or {}
+    mensaje = (data.get("mensaje") or "").strip()
+    attachment_url = (data.get("attachment_url") or "").strip() or None
+    attachment_name = (data.get("attachment_name") or "").strip() or None
+    attachment_mime = (data.get("attachment_mime") or "").strip() or None
+    if not mensaje and not attachment_url:
+        return {"error": "Mensaje vacio"}, 400
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    requested_paciente_id = data.get("paciente_id")
+    try:
+        requested_paciente_id = int(requested_paciente_id) if requested_paciente_id is not None else None
+    except ValueError:
+        conn.close()
+        return {"error": "paciente_id invalido"}, 400
+
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    if error:
+        conn.close()
+        body, code = error
+        return body, code
+
+    cursor.execute(
+        """
+        INSERT INTO chat_messages (paciente_id, sender_user_id, mensaje, attachment_url, attachment_name, attachment_mime)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (paciente_id, session["user_id"], mensaje, attachment_url, attachment_name, attachment_mime)
+    )
+    message_id = cursor.lastrowid
+
+    upsert_chat_read(cursor, session["user_id"], paciente_id, message_id)
+    conn.commit()
+    conn.close()
+
+    chat_url_patient = "/chat.html"
+    chat_url_therapist = f"/chat.html?paciente_id={paciente_id}"
+
+    # Push therapist/admin -> patient
+    if session.get("rol") in ["terapeuta", "admin"]:
+        preview_text = mensaje or f"Archivo: {attachment_name or 'adjunto'}"
+        preview = preview_text if len(preview_text) <= 120 else (preview_text[:117] + "...")
+        dispatch_push_async(enviar_push, paciente_id, "Nuevo mensaje de tu fisioterapeuta", preview, url=chat_url_patient)
+
+    # Push patient -> therapist
+    if session.get("rol") == "paciente":
+        conn = conectar()
+        cursor = conn.cursor()
+        terapeuta_id = get_terapeuta_id_from_paciente(cursor, paciente_id)
+        conn.close()
+        if terapeuta_id:
+            preview_text = mensaje or f"Archivo: {attachment_name or 'adjunto'}"
+            preview = preview_text if len(preview_text) <= 120 else (preview_text[:117] + "...")
+            dispatch_push_async(enviar_push_a_usuario, terapeuta_id, "Nuevo mensaje de un paciente", preview, url=chat_url_therapist)
+
+    return {"mensaje": "Mensaje enviado", "id": message_id, "paciente_id": paciente_id}
+
+
+@app.route("/chat/upload", methods=["POST"])
+def chat_upload():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    conn = conectar()
+    cursor = conn.cursor()
+
+    requested_paciente_id = request.form.get("paciente_id", type=int)
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    if error:
+        conn.close()
+        body, code = error
+        return body, code
+
+    if "file" not in request.files:
+        conn.close()
+        return {"error": "Archivo faltante"}, 400
+
+    file = request.files["file"]
+    if not file or not file.filename:
+        conn.close()
+        return {"error": "Archivo inválido"}, 400
+
+    original_name = secure_filename(file.filename)
+    ext = os.path.splitext(original_name)[1].lower()
+    unique_name = f"{int(time.time())}_{uuid4().hex[:10]}{ext}"
+
+    os.makedirs(CHAT_UPLOAD_DIR, exist_ok=True)
+    absolute_path = os.path.join(CHAT_UPLOAD_DIR, unique_name)
+    file.save(absolute_path)
+
+    rel_url = f"/assets/uploads/chat/{unique_name}"
+    mime = file.mimetype or mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+    conn.close()
+    return {
+        "mensaje": "Archivo subido",
+        "paciente_id": paciente_id,
+        "attachment_url": rel_url,
+        "attachment_name": original_name,
+        "attachment_mime": mime
+    }
+
+
+@app.route("/chat/typing", methods=["POST"])
+def chat_typing_post():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    data = request.get_json() or {}
+    requested_paciente_id = data.get("paciente_id")
+    try:
+        requested_paciente_id = int(requested_paciente_id) if requested_paciente_id is not None else None
+    except ValueError:
+        return {"error": "paciente_id invalido"}, 400
+
+    conn = conectar()
+    cursor = conn.cursor()
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    conn.close()
+    if error:
+        body, code = error
+        return body, code
+
+    is_typing = bool(data.get("is_typing", True))
+    key = (paciente_id, session["user_id"])
+    if is_typing:
+        typing_state[key] = time.time() + TYPING_TTL_SECONDS
+    else:
+        typing_state.pop(key, None)
+
+    return {"ok": True}
+
+
+@app.route("/chat/typing", methods=["GET"])
+def chat_typing_get():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    conn = conectar()
+    cursor = conn.cursor()
+    requested_paciente_id = request.args.get("paciente_id", type=int)
+    paciente_id, error = resolve_chat_paciente_id(cursor, requested_paciente_id)
+    if error:
+        conn.close()
+        body, code = error
+        return body, code
+
+    peer_typing, peer_name = get_peer_typing_state(cursor, paciente_id, session["user_id"])
+    conn.close()
+
+    return {"paciente_id": paciente_id, "peer_typing": peer_typing, "peer_name": peer_name}
+
+
+@app.route("/chat/unread_count", methods=["GET"])
+def chat_unread_count():
+    if "user_id" not in session:
+        return {"error": "No autorizado"}, 401
+
+    conn = conectar()
+    cursor = conn.cursor()
+    rol = session.get("rol")
+
+    paciente_ids = []
+    if rol == "paciente":
+        own_id = get_paciente_id_from_user(cursor, session["user_id"])
+        if own_id:
+            paciente_ids = [own_id]
+    elif rol in ["terapeuta", "admin"]:
+        cursor.execute("SELECT id FROM pacientes WHERE terapeuta_id = ?", (session["user_id"],))
+        paciente_ids = [r[0] for r in cursor.fetchall()]
+    else:
+        conn.close()
+        return {"error": "Acceso prohibido"}, 403
+
+    by_paciente, total = get_unread_count_for_user(cursor, session["user_id"], paciente_ids)
+    latest_preview = get_latest_unread_preview_for_user(cursor, session["user_id"], paciente_ids)
+    conn.close()
+    return {"total": total, "by_paciente": by_paciente, "latest_preview": latest_preview}
 
 
 # 🔹 POST → crear paciente

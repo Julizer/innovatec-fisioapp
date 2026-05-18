@@ -18,7 +18,23 @@ self.addEventListener('push', event => {
         }
     };
 
-    event.waitUntil(self.registration.showNotification(data.title, options));
+    event.waitUntil((async () => {
+        await self.registration.showNotification(data.title, options);
+
+        // Notify open windows so they can show in-app toast and optionally play a sound.
+        const windowClients = await clients.matchAll({ type: 'window', includeUncontrolled: true });
+        for (const client of windowClients) {
+            client.postMessage({
+                type: 'push-received',
+                payload: {
+                    title: data.title,
+                    body: data.body,
+                    icon: data.icon || '/assets/img/favicon.png',
+                    url: data.url || '/dashboard-paciente-home.html'
+                }
+            });
+        }
+    })());
 });
 
 self.addEventListener('notificationclick', event => {

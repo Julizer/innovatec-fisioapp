@@ -61,7 +61,7 @@ try {
 
     # Check if server is responding
     try {
-        $response = Invoke-WebRequest -Uri "http://127.0.0.1:5000" -TimeoutSec 5 -ErrorAction Stop
+        Invoke-WebRequest -Uri "http://127.0.0.1:5000" -TimeoutSec 5 -ErrorAction Stop -UseBasicParsing | Out-Null
         Write-Host "Server is responding. Opening browser..."
         Start-Process "http://127.0.0.1:5000"
     } catch {
