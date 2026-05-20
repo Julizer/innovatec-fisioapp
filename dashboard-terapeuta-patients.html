@@ -32,12 +32,9 @@
         <button id="enableTherapistPushBtn" class="btn btn-sm btn-outline-primary" type="button">Activar notificaciones</button>
         <small id="therapistPushState" class="text-muted"></small>
     </div>
-    <p class="ms-3 mt-2">Último paciente:</p>
     
-    <!-- 🔹 PACIENTES QUE NO COMPLETARON ENCUESTA HOY -->
     <div id="pendientes-pacientes" class="mb-3"></div>
 
-    <!-- 🔹 LISTA DINÁMICA -->
     <div id="lista-pacientes"></div>
 
 </section>
@@ -232,9 +229,6 @@
                                             </button>
                                             <button class="btn btn-sm btn-outline-primary" onclick="enviarRecordatorioNormal(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')">
                                                 Enviar recordatorio
-                                            </button>
-                                            <button class="btn btn-sm btn-outline-success" onclick="enviarPruebaNotificacion(${p.id}, '${p.nombre.replace(/'/g, "\\'")}')">
-                                                Probar notificación
                                             </button>
                                         </div>
                                     </div>
